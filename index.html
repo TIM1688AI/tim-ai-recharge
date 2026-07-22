@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tim AI 会员卡密充值站" />
+    <title>Tim AI · AI 会员充值</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <header class="site-header">
+      <nav class="top-nav" aria-label="主导航">
+        <a class="active" href="#recharge">自助充值</a>
+        <a href="#guide">使用指南</a>
+      </nav>
+      <span class="header-note"><i></i> 服务在线</span>
+    </header>
+
+    <main>
+      <section class="hero" id="recharge">
+        <div class="hero-copy">
+          <div class="eyebrow"><i></i> TIM AI 自助充值</div>
+          <h1>ChatGPT 官方会员 <span>自助充值</span></h1>
+          <p>输入卡密和 ChatGPT Session JSON，自动完成充值。</p>
+          <div class="hero-trust">
+            <div><strong>3-5 min</strong><span>预计完成</span></div>
+            <div><strong>24H/7DAYS</strong><span>全天自助服务</span></div>
+            <div><strong>SSL</strong><span>Session 留存</span></div>
+            <div><strong>5000+</strong><span>已服务客户</span></div>
+          </div>
+        </div>
+
+        <div class="service-layout">
+          <section class="how-it-works guide-side" id="guide">
+            <div class="section-heading">
+              <span>使用指南</span>
+              <h2>两项信息，立即充值</h2>
+            </div>
+            <div class="guide-grid">
+              <article><span>01</span><div class="guide-icon">⌁</div><h3>输入充值卡密</h3><p>输入卡密并完成验证。</p></article>
+              <article><span>02</span><div class="guide-icon">{ }</div><h3>复制 Session JSON</h3><p><a href="https://chatgpt.com/auth/login" target="_blank" rel="noopener noreferrer">登录 ChatGPT</a>，打开 <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer">Session 页面</a>并复制全部内容。</p></article>
+              <article><span>03</span><div class="guide-icon">✓</div><h3>开始充值</h3><p>粘贴 Session JSON，提交并等待结果。</p></article>
+            </div>
+          </section>
+
+          <div class="recharge-shell">
+          <div class="shell-topline">
+            <div>
+              <span class="status-dot"></span>
+              <span>充值通道运行正常</span>
+            </div>
+            <span class="secure-badge">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8V6a4.5 4.5 0 0 1 9 0v2m-9 0h9a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 14.5 17h-9A1.5 1.5 0 0 1 4 15.5v-6A1.5 1.5 0 0 1 5.5 8Z" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+              安全传输
+            </span>
+          </div>
+
+          <div class="mode-tabs" role="tablist" aria-label="服务模式">
+            <button class="mode-tab active" id="single-tab" role="tab" data-panel="single-panel" aria-controls="single-panel" aria-selected="true" tabindex="0">单卡充值</button>
+            <button class="mode-tab" id="batch-tab" role="tab" data-panel="batch-panel" aria-controls="batch-panel" aria-selected="false" tabindex="-1">批量查询</button>
+          </div>
+
+          <section class="tab-panel active" id="single-panel" role="tabpanel" aria-labelledby="single-tab">
+            <ol class="steps" aria-label="充值步骤">
+              <li class="active" data-step="1"><b>1</b><span>验证卡密</span></li>
+              <li data-step="2"><b>2</b><span>粘贴 Session</span></li>
+              <li data-step="3"><b>3</b><span>完成充值</span></li>
+            </ol>
+
+            <form id="recharge-form" novalidate>
+              <div class="form-section step-section" data-section="1">
+                <label for="card-key">充值卡密</label>
+                <div class="input-wrap key-input">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5a4.95 4.95 0 1 1-2 7.52L5 21.5H2v-3l7.47-7.47A4.95 4.95 0 0 1 14.5 6.5Zm3 3h.01" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  <input id="card-key" name="cardKey" maxlength="64" autocomplete="off" spellcheck="false" placeholder="请输入 16 位充值卡密" />
+                  <button type="button" class="paste-btn" id="paste-key">粘贴</button>
+                </div>
+                <p class="field-note">卡密通常由 16 位大写字母和数字组成</p>
+                <button class="primary-btn" id="verify-btn" type="button"><span>验证卡密</span><b>→</b></button>
+              </div>
+
+              <div class="form-section step-section hidden" data-section="2">
+                <div class="verified-card">
+                  <div><span>卡密验证通过</span><b id="masked-card-key">•••• •••• •••• 0000</b></div>
+                  <button type="button" id="change-key">更换</button>
+                </div>
+                <div class="session-guide" aria-labelledby="session-guide-title">
+                  <div class="session-guide-head">
+                    <span class="session-guide-icon" aria-hidden="true">{ }</span>
+                    <div>
+                      <h3 id="session-guide-title">获取 Session JSON</h3>
+                      <p>按以下步骤获取，不需要输入密码。</p>
+                    </div>
+                  </div>
+                  <ol>
+                    <li>
+                      <b>1</b>
+                      <span>登录你的 ChatGPT 账号</span>
+                      <a href="https://chatgpt.com/auth/login" target="_blank" rel="noopener noreferrer">登录 ChatGPT ↗</a>
+                    </li>
+                    <li>
+                      <b>2</b>
+                      <span>登录成功后，打开 Session 页面</span>
+                      <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer">获取 Session ↗</a>
+                    </li>
+                    <li>
+                      <b>3</b>
+                      <span>复制页面全部 JSON，粘贴到下方</span>
+                    </li>
+                  </ol>
+                </div>
+                <div class="session-field">
+                  <div class="field-label-row">
+                    <label for="session-json">ChatGPT Session JSON</label>
+                    <span>完整粘贴</span>
+                  </div>
+                  <div class="session-wrap">
+                    <textarea id="session-json" name="sessionJson" autocomplete="off" spellcheck="false" placeholder="将完整的 Session JSON 粘贴到这里"></textarea>
+                    <button type="button" id="paste-session">粘贴</button>
+                  </div>
+                  <p class="field-note session-note">内容应以 { 开头并以 } 结尾。</p>
+                </div>
+                <button class="primary-btn" id="redeem-btn" type="submit"><span>开始充值</span><b>→</b></button>
+              </div>
+
+              <div class="form-section result-section hidden" data-section="3" role="status" aria-live="polite">
+                <div class="result-icon success">
+                  <svg viewBox="0 0 48 48" aria-hidden="true">
+                    <path d="M42 21.8V24a18 18 0 1 1-10.7-16.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" />
+                    <path d="m17 23 5 5L41 9" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+                <h2>充值成功</h2>
+                <p class="expiry-line">订阅有效期至 <strong id="expires-date">—</strong></p>
+                <div class="success-notice">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5m0 3.2v.1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+                  <span>充值成功后，请回到 ChatGPT，点击升级/恢复订阅或重新打开 App 刷新状态。</span>
+                </div>
+                <button class="secondary-btn restart-btn" type="button" id="restart-btn">再充一张</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="tab-panel" id="batch-panel" role="tabpanel" aria-labelledby="batch-tab">
+            <div class="batch-head">
+              <div><h2>批量查询卡密</h2><p id="batch-limit-note">每行输入一个卡密，单次最多查询 100 个</p></div>
+              <span id="key-count">0 / 100</span>
+            </div>
+            <textarea id="batch-keys" aria-describedby="batch-limit-note" placeholder="AAAAAAAAAAAAAAAA&#10;BBBBBBBBBBBBBBBB" spellcheck="false"></textarea>
+            <button class="primary-btn" id="batch-btn" type="button"><span>查询卡密状态</span><b>→</b></button>
+            <div class="batch-summary hidden" id="batch-summary" aria-label="查询统计"></div>
+            <div class="batch-results hidden" id="batch-results"></div>
+          </section>
+
+            <div class="privacy-note">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 20 7v5.5c0 4.3-2.8 7.2-8 8.5-5.2-1.3-8-4.2-8-8.5V7l8-3.5Zm-3 8.7 2 2 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <p><b>Session JSON 仅用于本次充值</b><span>页面刷新或关闭后自动清除，不写入本地存储。</span></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>正规渠道 · 安全可靠 · 即时到账</p>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="modal-backdrop hidden" id="override-modal" role="dialog" aria-modal="true" aria-labelledby="override-title">
+      <div class="modal">
+        <button class="modal-close" type="button" aria-label="关闭">×</button>
+        <div class="modal-icon">!</div>
+        <h2 id="override-title">确认覆盖现有订阅？</h2>
+        <p>系统检测到此账户已有会员套餐。继续可能改变当前订阅状态或有效期，请确认后操作。</p>
+        <div class="modal-actions">
+          <button class="secondary-btn" id="cancel-override" type="button">暂不充值</button>
+          <button class="danger-btn" id="confirm-override" type="button">确认覆盖并继续</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>
