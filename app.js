@@ -78,12 +78,12 @@ async function apiRequest(path, body, { proxyOnly = false } = {}) {
 
 function normalizeKey(value) {
   const compact = String(value || '').trim().replace(/\s/g, '');
-  const match = compact.match(/^plus-?([a-z0-9]{16})$/i);
-  return match ? `Plus-${match[1].toUpperCase()}` : compact;
+  const match = compact.match(/^([a-z0-9]{1,32})-([a-z0-9]{16})$/i);
+  return match ? `${match[1]}-${match[2].toUpperCase()}` : compact;
 }
 
 function isPlausibleKey(value) {
-  return /^Plus-[A-Z0-9]{16}$/.test(value);
+  return /^[A-Za-z0-9]{1,32}-[A-Z0-9]{16}$/.test(value);
 }
 
 function canRedeemCard(data) {
@@ -92,7 +92,8 @@ function canRedeemCard(data) {
 }
 
 function maskKey(key) {
-  return `Plus-•••• •••• •••• ${key.slice(-4)}`;
+  const prefix = key.split('-', 1)[0];
+  return `${prefix}-•••• •••• •••• ${key.slice(-4)}`;
 }
 
 function showStep(step) {
@@ -161,7 +162,7 @@ async function verifyCard() {
   const cardKey = normalizeKey($('#card-key').value);
   $('#card-key').value = cardKey;
   if (!isPlausibleKey(cardKey)) {
-    showToast('请输入 Plus- 开头的充值卡密', 'error');
+    showToast('请输入“产品前缀-16位卡密”格式', 'error');
     $('#card-key').focus();
     return;
   }

@@ -78,10 +78,10 @@
                 <label for="card-key">充值卡密</label>
                 <div class="input-wrap key-input">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5a4.95 4.95 0 1 1-2 7.52L5 21.5H2v-3l7.47-7.47A4.95 4.95 0 0 1 14.5 6.5Zm3 3h.01" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                  <input id="card-key" name="cardKey" maxlength="64" autocomplete="off" spellcheck="false" placeholder="请输入 Plus- 开头的充值卡密" />
+                  <input id="card-key" name="cardKey" maxlength="64" autocomplete="off" spellcheck="false" placeholder="请输入带产品前缀的充值卡密" />
                   <button type="button" class="paste-btn" id="paste-key">粘贴</button>
                 </div>
-                <p class="field-note">格式：Plus- 后跟 16 位字母或数字</p>
+                <p class="field-note">格式：产品前缀-16 位字母或数字，例如 Plus-… 或 Pro5x-…</p>
                 <button class="primary-btn" id="verify-btn" type="button"><span>验证卡密</span><b>→</b></button>
               </div>
 
@@ -152,7 +152,7 @@
               <div><h2>批量查询卡密</h2><p id="batch-limit-note">每行输入一个卡密，单次最多查询 100 个</p></div>
               <span id="key-count">0 / 100</span>
             </div>
-            <textarea id="batch-keys" aria-describedby="batch-limit-note" placeholder="Plus-AAAAAAAAAAAAAAAA&#10;Plus-BBBBBBBBBBBBBBBB" spellcheck="false"></textarea>
+            <textarea id="batch-keys" aria-describedby="batch-limit-note" placeholder="Plus-AAAAAAAAAAAAAAAA&#10;Pro5x-BBBBBBBBBBBBBBBB" spellcheck="false"></textarea>
             <div class="batch-button-row">
               <button class="primary-btn" id="batch-btn" type="button"><span>查询卡密状态</span><b>→</b></button>
               <button class="secondary-btn batch-clear-btn" id="batch-clear" type="button" disabled><span>清空卡密查询</span><b aria-hidden="true">↺</b></button>

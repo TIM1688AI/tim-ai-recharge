@@ -20,7 +20,7 @@ const {
 } = require('./app');
 
 const TEST_CARD_KEY = 'Plus-AAAAAAAAAAAAAAAA';
-const SECOND_TEST_CARD_KEY = 'Plus-BBBBBBBBBBBBBBBB';
+const SECOND_TEST_CARD_KEY = 'Pro5x-BBBBBBBBBBBBBBBB';
 
 function request(server, { path = '/', method = 'GET', headers = {}, body = '' } = {}) {
   const address = server.address();
@@ -62,12 +62,15 @@ test('proxy payload validation preserves documented requests', () => {
   }), null);
 });
 
-test('Plus card keys are normalized and old card keys are rejected', () => {
-  assert.equal(normalizeKey(' plus-aaaaaaaaaaaaaaaa '), TEST_CARD_KEY);
-  assert.equal(normalizeKey('plusaaaaaaaaaaaaaaaa'), TEST_CARD_KEY);
+test('product-prefixed card keys are normalized and old card keys are rejected', () => {
+  assert.equal(normalizeKey(' Plus-aaaaaaaaaaaaaaaa '), TEST_CARD_KEY);
+  assert.equal(normalizeKey('Pro5x-bbbbbbbbbbbbbbbb'), SECOND_TEST_CARD_KEY);
   assert.equal(isPlausibleKey(TEST_CARD_KEY), true);
+  assert.equal(isPlausibleKey(SECOND_TEST_CARD_KEY), true);
   assert.equal(isPlausibleKey('AAAAAAAAAAAAAAAA'), false);
+  assert.equal(isPlausibleKey('PlusAAAAAAAAAAAAAAAA'), false);
   assert.equal(maskKey(TEST_CARD_KEY), 'Plus-•••• •••• •••• AAAA');
+  assert.equal(maskKey(SECOND_TEST_CARD_KEY), 'Pro5x-•••• •••• •••• BBBB');
   assert.match(validateProxyPayload('/api/v1/verify-cardkey', {
     cardKey: 'AAAAAAAAAAAAAAAA',
   }), /cardKey/);
