@@ -77,11 +77,13 @@ async function apiRequest(path, body, { proxyOnly = false } = {}) {
 }
 
 function normalizeKey(value) {
-  return value.trim().replace(/[\s-]/g, '').toUpperCase();
+  const compact = String(value || '').trim().replace(/\s/g, '');
+  const match = compact.match(/^plus-?([a-z0-9]{16})$/i);
+  return match ? `Plus-${match[1].toUpperCase()}` : compact;
 }
 
 function isPlausibleKey(value) {
-  return /^[A-Z0-9]{16}$/.test(value);
+  return /^Plus-[A-Z0-9]{16}$/.test(value);
 }
 
 function canRedeemCard(data) {
@@ -90,7 +92,7 @@ function canRedeemCard(data) {
 }
 
 function maskKey(key) {
-  return `${key.slice(0, 4)} •••• •••• ${key.slice(-4)}`;
+  return `Plus-•••• •••• •••• ${key.slice(-4)}`;
 }
 
 function showStep(step) {
@@ -159,7 +161,7 @@ async function verifyCard() {
   const cardKey = normalizeKey($('#card-key').value);
   $('#card-key').value = cardKey;
   if (!isPlausibleKey(cardKey)) {
-    showToast('请输入正确的 16 位卡密', 'error');
+    showToast('请输入 Plus- 开头的充值卡密', 'error');
     $('#card-key').focus();
     return;
   }
@@ -530,6 +532,9 @@ if (typeof module !== 'undefined' && module.exports) {
     buildRedeemPayload,
     canRedeemCard,
     getCardStatus,
+    isPlausibleKey,
+    maskKey,
+    normalizeKey,
     parseSessionJsonValue,
   };
 }

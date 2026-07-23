@@ -106,7 +106,7 @@ function enforceRateLimit(request, response, publicPath, { phase = 'validated' }
 
 function validateProxyPayload(upstreamPath, payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '请求体必须是 JSON 对象';
-  const isCardKey = (value) => typeof value === 'string' && /^[A-Z0-9]{16}$/.test(value);
+  const isCardKey = (value) => typeof value === 'string' && /^Plus-[A-Z0-9]{16}$/.test(value);
 
   if (upstreamPath === '/api/v1/verify-cardkey') {
     return isCardKey(payload.cardKey) ? null : 'cardKey 格式不正确';

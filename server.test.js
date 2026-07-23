@@ -13,8 +13,14 @@ const {
   buildRedeemPayload,
   canRedeemCard,
   getCardStatus,
+  isPlausibleKey,
+  maskKey,
+  normalizeKey,
   parseSessionJsonValue,
 } = require('./app');
+
+const TEST_CARD_KEY = 'Plus-AAAAAAAAAAAAAAAA';
+const SECOND_TEST_CARD_KEY = 'Plus-BBBBBBBBBBBBBBBB';
 
 function request(server, { path = '/', method = 'GET', headers = {}, body = '' } = {}) {
   const address = server.address();
@@ -44,16 +50,27 @@ function request(server, { path = '/', method = 'GET', headers = {}, body = '' }
 
 test('proxy payload validation preserves documented requests', () => {
   assert.equal(validateProxyPayload('/api/v1/verify-cardkey', {
-    cardKey: 'AAAAAAAAAAAAAAAA',
+    cardKey: TEST_CARD_KEY,
   }), null);
   assert.equal(validateProxyPayload('/api/v1/cardkey/batch-status', {
-    cardKeys: ['AAAAAAAAAAAAAAAA', 'BBBBBBBBBBBBBBBB'],
+    cardKeys: [TEST_CARD_KEY, SECOND_TEST_CARD_KEY],
   }), null);
   assert.equal(validateProxyPayload('/api/v1/redeem', {
-    cardKey: 'AAAAAAAAAAAAAAAA',
+    cardKey: TEST_CARD_KEY,
     accountSession: JSON.stringify({ account: { id: 'user-abc' } }),
     confirmOverride: false,
   }), null);
+});
+
+test('Plus card keys are normalized and old card keys are rejected', () => {
+  assert.equal(normalizeKey(' plus-aaaaaaaaaaaaaaaa '), TEST_CARD_KEY);
+  assert.equal(normalizeKey('plusaaaaaaaaaaaaaaaa'), TEST_CARD_KEY);
+  assert.equal(isPlausibleKey(TEST_CARD_KEY), true);
+  assert.equal(isPlausibleKey('AAAAAAAAAAAAAAAA'), false);
+  assert.equal(maskKey(TEST_CARD_KEY), 'Plus-•••• •••• •••• AAAA');
+  assert.match(validateProxyPayload('/api/v1/verify-cardkey', {
+    cardKey: 'AAAAAAAAAAAAAAAA',
+  }), /cardKey/);
 });
 
 test('Session JSON parser identifies the recharge account before submission', () => {
@@ -70,7 +87,7 @@ test('Session JSON parser identifies the recharge account before submission', ()
     user: { email: 'other@example.com' },
     account: { id: 'user-other' },
   }));
-  const payload = buildRedeemPayload('AAAAAAAAAAAAAAAA', parsed, false);
+  const payload = buildRedeemPayload(TEST_CARD_KEY, parsed, false);
   assert.equal(JSON.parse(payload.accountSession).user.email, 'member@example.com');
   assert.notEqual(payload.accountSession, changedInput.accountSession);
 });
@@ -97,7 +114,7 @@ test('proxy rejects malformed and unsupported input before upstream forwarding',
   assert.match(validateProxyPayload('/api/v1/verify-cardkey', { cardKey: 'bad' }), /cardKey/);
   assert.match(validateProxyPayload('/api/v1/cardkey/batch-status', { cardKeys: [] }), /1–100/);
   assert.match(validateProxyPayload('/api/v1/redeem', {
-    cardKey: 'AAAAAAAAAAAAAAAA',
+    cardKey: TEST_CARD_KEY,
     accountSession: JSON.stringify({ account: {} }),
     confirmOverride: false,
   }), /account\.id/);

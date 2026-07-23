@@ -8,6 +8,8 @@
 - 响应式布局与完整的错误提示
 - 使用用户粘贴的 ChatGPT Session JSON 完成充值
 
+卡密统一使用 `Plus-` 前缀加 16 位字母或数字，例如 `Plus-AAAAAAAAAAAAAAAA`。网站不再接受旧的纯 16 位卡密。
+
 ## 本地预览
 
 Windows 用户可直接双击 `打开网站.cmd`。
