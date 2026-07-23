@@ -1,6 +1,6 @@
 # Tim AI 充值站
 
-一个根据 JZGOPAY 接口文档制作的零依赖 Node.js 充值站，包含：
+一个根据 jzai16888 合作方接口文档制作的零依赖 Node.js 充值站，包含：
 
 - 单卡校验与充值
 - 已有订阅覆盖二次确认
@@ -27,7 +27,7 @@ npm start
 ```js
 const CONFIG = {
   brandName: "Tim AI",
-  apiBase: "https://jzgopay.com/api/v1",
+  apiBase: "https://jzai16888.com/api/v1",
   proxyBase: "/api-proxy",
   requestTimeout: 25000,
 };
@@ -61,6 +61,6 @@ npm test
 
 ## 安全说明
 
-Session JSON 仅保存在当前页面内存中，刷新或关闭页面后清除，不写入 localStorage。提交充值时会作为 `accountSession` 发送到配置的 JZGOPAY API。
+Session JSON 仅保存在当前页面内存中，刷新或关闭页面后清除，不写入 localStorage。提交充值时会作为 `accountSession` 发送到配置的 jzai16888 API。
 
-本地服务仅代理 `verify-cardkey`、`redeem` 和 `cardkey/batch-status` 三个白名单接口。代理会校验 JSON 请求结构、限制请求体大小，并按照上游文档对每个客户端和整个服务执行 60 秒滑动窗口限流。
+本地服务仅代理 `verify-cardkey`、`redeem` 和 `cardkey/batch-status` 三个白名单接口。代理会校验 JSON 请求结构、限制请求体大小，并对每个客户端和整个服务执行 60 秒滑动窗口保护性限流。

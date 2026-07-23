@@ -10,21 +10,23 @@ const port = Number.isInteger(configuredPort) && configuredPort >= 0 && configur
   : 4173;
 const trustProxy = process.env.TRUST_PROXY === '1';
 const root = __dirname;
+const upstreamHostname = 'jzai16888.com';
+const upstreamOrigin = `https://${upstreamHostname}`;
 const apiRoutes = new Map([
   ['/api-proxy/verify-cardkey', '/api/v1/verify-cardkey'],
   ['/api-proxy/redeem', '/api/v1/redeem'],
   ['/api-proxy/cardkey/batch-status', '/api/v1/cardkey/batch-status'],
 ]);
 const rateLimitRules = new Map([
-  ['/api-proxy/verify-cardkey', { perIp: 10, global: 10 }],
-  ['/api-proxy/redeem', { perIp: 5, global: 5 }],
-  ['/api-proxy/cardkey/batch-status', { perIp: 10, global: 10 }],
+  ['/api-proxy/verify-cardkey', { perIp: 10, global: 10, rawPerIp: 30 }],
+  ['/api-proxy/redeem', { perIp: 5, global: 5, rawPerIp: 30 }],
+  ['/api-proxy/cardkey/batch-status', { perIp: 10, global: 10, rawPerIp: 30 }],
 ]);
 const rateLimitBuckets = new Map();
 const rateLimitWindowMs = 60 * 1000;
 const securityHeaders = {
   'Cache-Control': 'no-store',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://jzgopay.com; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'Content-Security-Policy': `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ${upstreamOrigin}; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
@@ -70,15 +72,22 @@ function activeRateBucket(key, now) {
   return active;
 }
 
-function enforceRateLimit(request, response, publicPath) {
+function enforceRateLimit(request, response, publicPath, { phase = 'validated' } = {}) {
   const rule = rateLimitRules.get(publicPath);
   if (!rule) return true;
 
   const now = Date.now();
-  const buckets = [
-    { key: `global:${publicPath}`, limit: rule.global },
-    { key: `ip:${publicPath}:${getClientIp(request)}`, limit: rule.perIp },
-  ].map((entry) => ({ ...entry, values: activeRateBucket(entry.key, now) }));
+  const clientIp = getClientIp(request);
+  const configuredBuckets = phase === 'raw'
+    ? [{ key: `raw-ip:${publicPath}:${clientIp}`, limit: rule.rawPerIp }]
+    : [
+        { key: `global:${publicPath}`, limit: rule.global },
+        { key: `ip:${publicPath}:${clientIp}`, limit: rule.perIp },
+      ];
+  const buckets = configuredBuckets.map((entry) => ({
+    ...entry,
+    values: activeRateBucket(entry.key, now),
+  }));
   const blocked = buckets.find((entry) => entry.values.length >= entry.limit);
   if (blocked) {
     const retryAfter = Math.max(1, Math.ceil((blocked.values[0] + rateLimitWindowMs - now) / 1000));
@@ -134,12 +143,12 @@ function proxyApi(request, response, upstreamPath, publicPath) {
     response.writeHead(405, { ...securityHeaders, Allow: 'POST' }).end('Method not allowed');
     return;
   }
+  if (!enforceRateLimit(request, response, publicPath, { phase: 'raw' })) return;
   const contentType = String(request.headers['content-type'] || '').toLowerCase();
   if (!contentType.startsWith('application/json')) {
     sendJson(response, 415, { code: 41500, message: '仅支持 application/json' });
     return;
   }
-  if (!enforceRateLimit(request, response, publicPath)) return;
 
   const chunks = [];
   let size = 0;
@@ -170,9 +179,10 @@ function proxyApi(request, response, upstreamPath, publicPath) {
       sendJson(response, 400, { code: 40000, message: validationError });
       return;
     }
+    if (!enforceRateLimit(request, response, publicPath)) return;
     const body = Buffer.from(JSON.stringify(payload));
     const upstream = https.request({
-      hostname: 'jzgopay.com',
+      hostname: upstreamHostname,
       port: 443,
       path: upstreamPath,
       method: 'POST',
@@ -252,7 +262,11 @@ cleanupTimer.unref();
 if (require.main === module) {
   const server = createServer();
   server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') process.exit(0);
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Tim AI: 端口 ${port} 已被占用，请停止旧服务或设置其他 PORT`);
+      process.exitCode = 1;
+      return;
+    }
     throw error;
   });
   server.listen(port, host, () => {

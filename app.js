@@ -1,6 +1,6 @@
 const CONFIG = {
   brandName: "Tim AI",
-  apiBase: "https://jzgopay.com/api/v1",
+  apiBase: "https://jzai16888.com/api/v1",
   proxyBase: "/api-proxy",
   requestTimeout: 25000,
 };
@@ -8,6 +8,8 @@ const CONFIG = {
 const state = {
   verifiedCardKey: "",
   modalReturnFocus: null,
+  accountModalReturnFocus: null,
+  pendingRedeemSession: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -82,6 +84,11 @@ function isPlausibleKey(value) {
   return /^[A-Z0-9]{16}$/.test(value);
 }
 
+function canRedeemCard(data) {
+  const status = Number(data?.status);
+  return status === 4 || (data?.valid === true && status === 0);
+}
+
 function maskKey(key) {
   return `${key.slice(0, 4)} •••• •••• ${key.slice(-4)}`;
 }
@@ -101,19 +108,44 @@ function showStep(step) {
 function openOverrideModal() {
   state.modalReturnFocus = document.activeElement;
   $('#override-modal').classList.remove('hidden');
-  $('.modal-close').focus();
+  $('.override-modal-close').focus();
 }
 
-function closeOverrideModal({ restoreFocus = true } = {}) {
+function clearPendingRedeemSession() {
+  state.pendingRedeemSession = null;
+  $('#confirm-account-value').textContent = '';
+}
+
+function closeOverrideModal({ restoreFocus = true, clearPending = true } = {}) {
   $('#override-modal').classList.add('hidden');
   if (restoreFocus && state.modalReturnFocus instanceof HTMLElement) {
     state.modalReturnFocus.focus();
   }
   state.modalReturnFocus = null;
+  if (clearPending) clearPendingRedeemSession();
+}
+
+function openAccountConfirmModal(sessionInfo) {
+  state.accountModalReturnFocus = document.activeElement;
+  state.pendingRedeemSession = Object.freeze({ ...sessionInfo });
+  $('#confirm-account-value').textContent = sessionInfo.accountLabel;
+  $('#account-confirm-modal').classList.remove('hidden');
+  $('#cancel-account-redeem').focus();
+}
+
+function closeAccountConfirmModal({ restoreFocus = true, clearPending = true } = {}) {
+  $('#account-confirm-modal').classList.add('hidden');
+  $('#confirm-account-value').textContent = '';
+  if (restoreFocus && state.accountModalReturnFocus instanceof HTMLElement) {
+    state.accountModalReturnFocus.focus();
+  }
+  state.accountModalReturnFocus = null;
+  if (clearPending) clearPendingRedeemSession();
 }
 
 function resetRecharge() {
   state.verifiedCardKey = '';
+  closeAccountConfirmModal({ restoreFocus: false });
   closeOverrideModal({ restoreFocus: false });
   $('#recharge-form').reset();
   $('#card-key').value = '';
@@ -135,14 +167,14 @@ async function verifyCard() {
   setLoading(button, true, '正在验证…');
   try {
     const result = await apiRequest('/verify-cardkey', { cardKey });
-    if (result.code !== 0 || !result.data?.valid || Number(result.data?.status) !== 0) {
+    if (result.code !== 0 || !canRedeemCard(result.data)) {
       throw new Error(result.data?.message || result.message || '该卡密当前不可使用');
     }
     state.verifiedCardKey = cardKey;
     $('#masked-card-key').textContent = maskKey(cardKey);
     showStep(2);
     $('#session-json').focus();
-    showToast('卡密验证通过');
+    showToast(Number(result.data.status) === 4 ? '卡密可重新提交' : '卡密验证通过');
   } catch (error) {
     showToast(error.message, 'error');
   } finally {
@@ -150,40 +182,75 @@ async function verifyCard() {
   }
 }
 
-function validateSessionJson() {
-  const value = $('#session-json').value.trim();
-  if (!value) throw new Error('请粘贴 Session JSON');
+function parseSessionJsonValue(value) {
+  if (typeof value !== 'string') throw new Error('请粘贴 Session JSON');
+  const normalizedValue = value.trim();
+  if (!normalizedValue) throw new Error('请粘贴 Session JSON');
   let session;
   try {
-    session = JSON.parse(value);
+    session = JSON.parse(normalizedValue);
   } catch {
     throw new Error('Session JSON 格式不正确');
   }
-  if (!session || typeof session !== 'object' || !session.account?.id) {
+  if (
+    !session ||
+    typeof session !== 'object' ||
+    typeof session.account?.id !== 'string' ||
+    !session.account.id.trim()
+  ) {
     throw new Error('Session JSON 中缺少 account.id');
   }
-  return JSON.stringify(session);
+  const accountEmail = [session.user?.email, session.account?.email, session.email]
+    .find((item) => typeof item === 'string' && item.trim());
+  return Object.freeze({
+    accountSession: JSON.stringify(session),
+    accountLabel: accountEmail?.trim() || session.account.id.trim(),
+  });
 }
 
-async function redeemCard(confirmOverride = false) {
+function validateSessionJson() {
+  return parseSessionJsonValue($('#session-json').value);
+}
+
+function buildRedeemPayload(cardKey, sessionInfo, confirmOverride) {
+  return {
+    cardKey,
+    accountSession: sessionInfo.accountSession,
+    confirmOverride,
+  };
+}
+
+function prepareRedeem() {
   const button = $('#redeem-btn');
   if (button.disabled) return;
-  let accountSession;
   try {
-    accountSession = validateSessionJson();
+    openAccountConfirmModal(validateSessionJson());
   } catch (error) {
     showToast(error.message, 'error');
+  }
+}
+
+async function submitRedeem(sessionInfo, confirmOverride = false) {
+  const button = $('#redeem-btn');
+  if (button.disabled) return;
+  if (!sessionInfo?.accountSession) {
+    clearPendingRedeemSession();
+    showToast('充值确认信息已失效，请重新确认账号', 'error');
     return;
   }
 
   setLoading(button, true, '正在提交…');
+  let awaitingOverride = false;
   try {
-    const result = await apiRequest('/redeem', {
-      cardKey: state.verifiedCardKey,
-      accountSession,
-      confirmOverride,
-    }, { proxyOnly: true });
+    const result = await apiRequest(
+      '/redeem',
+      buildRedeemPayload(state.verifiedCardKey, sessionInfo, confirmOverride),
+      { proxyOnly: true },
+    );
     if (result.code === 60804 || result.data?.requireConfirm) {
+      if (confirmOverride) throw new Error(result.data?.message || result.message || '覆盖订阅确认未生效，请稍后重试');
+      state.pendingRedeemSession = sessionInfo;
+      awaitingOverride = true;
       openOverrideModal();
       return;
     }
@@ -198,6 +265,7 @@ async function redeemCard(confirmOverride = false) {
     showToast(error.message, 'error');
   } finally {
     setLoading(button, false);
+    if (!awaitingOverride) clearPendingRedeemSession();
   }
 }
 
@@ -207,6 +275,23 @@ function parseBatchKeys() {
 
 function getBatchKeys() {
   return parseBatchKeys().slice(0, 100);
+}
+
+function updateBatchControls() {
+  const count = parseBatchKeys().length;
+  $('#key-count').textContent = `${count} / 100`;
+  $('#key-count').classList.toggle('over-limit', count > 100);
+  $('#batch-clear').disabled = $('#batch-keys').value.length === 0;
+  $('#batch-summary').classList.add('hidden');
+  $('#batch-results').classList.add('hidden');
+}
+
+function clearBatchKeys() {
+  const input = $('#batch-keys');
+  if (!input.value) return;
+  input.value = '';
+  updateBatchControls();
+  input.focus();
 }
 
 function maskEmail(email) {
@@ -257,6 +342,12 @@ function getCardStatus(item) {
   if (status === 0 || description.includes('未使用')) {
     return { kind: 'unused', label: '未使用' };
   }
+  if (status === 3 || description.includes('排队')) {
+    return { kind: 'queued', label: description || '排队中' };
+  }
+  if (status === 4 || description.includes('失败')) {
+    return { kind: 'retry', label: description || '可重新提交' };
+  }
   if (
     status === 1 ||
     status === 2 ||
@@ -278,8 +369,14 @@ function renderBatchSummary(items) {
   const counts = items.reduce((summary, item) => {
     summary[getCardStatus(item).kind] += 1;
     return summary;
-  }, { unused: 0, used: 0, missing: 0 });
-  const labels = { unused: '未使用', used: '已使用', missing: '不存在' };
+  }, { unused: 0, used: 0, queued: 0, retry: 0, missing: 0 });
+  const labels = {
+    unused: '未使用',
+    used: '已使用',
+    queued: '排队中',
+    retry: '可重试',
+    missing: '不存在',
+  };
   const summary = $('#batch-summary');
   summary.replaceChildren(...Object.entries(labels).map(([kind, label]) => {
     const card = document.createElement('div');
@@ -392,29 +489,47 @@ function bindEvents() {
   $('#card-key').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); verifyCard(); } });
   $('#verify-btn').addEventListener('click', verifyCard);
   $('#change-key').addEventListener('click', resetRecharge);
-  $('#recharge-form').addEventListener('submit', (event) => { event.preventDefault(); redeemCard(false); });
+  $('#recharge-form').addEventListener('submit', (event) => { event.preventDefault(); prepareRedeem(); });
   $('#restart-btn').addEventListener('click', resetRecharge);
 
-  $('#batch-keys').addEventListener('input', () => {
-    const count = parseBatchKeys().length;
-    $('#key-count').textContent = `${count} / 100`;
-    $('#key-count').classList.toggle('over-limit', count > 100);
-    $('#batch-summary').classList.add('hidden');
-    $('#batch-results').classList.add('hidden');
-  });
+  $('#batch-keys').addEventListener('input', updateBatchControls);
+  $('#batch-clear').addEventListener('click', clearBatchKeys);
   $('#batch-btn').addEventListener('click', queryBatch);
 
-  $('.modal-close').addEventListener('click', () => closeOverrideModal());
+  $('.account-modal-close').addEventListener('click', () => closeAccountConfirmModal());
+  $('#cancel-account-redeem').addEventListener('click', () => closeAccountConfirmModal());
+  $('#account-confirm-modal').addEventListener('click', (event) => { if (event.target.id === 'account-confirm-modal') closeAccountConfirmModal(); });
+  $('#confirm-account-redeem').addEventListener('click', () => {
+    const sessionInfo = state.pendingRedeemSession;
+    closeAccountConfirmModal({ restoreFocus: false, clearPending: false });
+    submitRedeem(sessionInfo, false);
+  });
+
+  $('.override-modal-close').addEventListener('click', () => closeOverrideModal());
   $('#cancel-override').addEventListener('click', () => closeOverrideModal());
   $('#override-modal').addEventListener('click', (event) => { if (event.target.id === 'override-modal') closeOverrideModal(); });
   $('#confirm-override').addEventListener('click', () => {
-    closeOverrideModal({ restoreFocus: false });
-    redeemCard(true);
+    const sessionInfo = state.pendingRedeemSession;
+    closeOverrideModal({ restoreFocus: false, clearPending: false });
+    submitRedeem(sessionInfo, true);
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !$('#override-modal').classList.contains('hidden')) closeOverrideModal();
+    if (event.key !== 'Escape') return;
+    if (!$('#account-confirm-modal').classList.contains('hidden')) closeAccountConfirmModal();
+    else if (!$('#override-modal').classList.contains('hidden')) closeOverrideModal();
   });
 }
 
-configureBrand();
-bindEvents();
+if (typeof document !== 'undefined') {
+  configureBrand();
+  bindEvents();
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    buildRedeemPayload,
+    canRedeemCard,
+    getCardStatus,
+    parseSessionJsonValue,
+  };
+}

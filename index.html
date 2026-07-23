@@ -153,7 +153,10 @@
               <span id="key-count">0 / 100</span>
             </div>
             <textarea id="batch-keys" aria-describedby="batch-limit-note" placeholder="AAAAAAAAAAAAAAAA&#10;BBBBBBBBBBBBBBBB" spellcheck="false"></textarea>
-            <button class="primary-btn" id="batch-btn" type="button"><span>查询卡密状态</span><b>→</b></button>
+            <div class="batch-button-row">
+              <button class="primary-btn" id="batch-btn" type="button"><span>查询卡密状态</span><b>→</b></button>
+              <button class="secondary-btn batch-clear-btn" id="batch-clear" type="button" disabled><span>清空卡密查询</span><b aria-hidden="true">↺</b></button>
+            </div>
             <div class="batch-summary hidden" id="batch-summary" aria-label="查询统计"></div>
             <div class="batch-results hidden" id="batch-results"></div>
           </section>
@@ -173,9 +176,27 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <div class="modal-backdrop hidden" id="account-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="account-confirm-title">
+      <div class="modal account-confirm-modal">
+        <button class="modal-close account-modal-close" type="button" aria-label="关闭">×</button>
+        <div class="modal-icon account-modal-icon" aria-hidden="true">@</div>
+        <h2 id="account-confirm-title">确认充值账号</h2>
+        <p>本次 ChatGPT 会员将充值到以下账号，请确认无误后继续。</p>
+        <div class="account-confirm-card">
+          <span>充值账号</span>
+          <strong id="confirm-account-value"></strong>
+        </div>
+        <p class="account-confirm-note">请仔细核对账号，确认后才会提交充值。</p>
+        <div class="modal-actions">
+          <button class="secondary-btn" id="cancel-account-redeem" type="button">返回检查</button>
+          <button class="primary-btn" id="confirm-account-redeem" type="button"><span>确认充值</span><b>→</b></button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-backdrop hidden" id="override-modal" role="dialog" aria-modal="true" aria-labelledby="override-title">
       <div class="modal">
-        <button class="modal-close" type="button" aria-label="关闭">×</button>
+        <button class="modal-close override-modal-close" type="button" aria-label="关闭">×</button>
         <div class="modal-icon">!</div>
         <h2 id="override-title">确认覆盖现有订阅？</h2>
         <p>系统检测到此账户已有会员套餐。继续可能改变当前订阅状态或有效期，请确认后操作。</p>
