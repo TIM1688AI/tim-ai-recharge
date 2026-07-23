@@ -86,6 +86,24 @@ function isPlausibleKey(value) {
   return /^[A-Za-z0-9]{1,32}-[A-Z0-9]{16}$/.test(value);
 }
 
+function getCardKeyFromUrl(search) {
+  const rawCardKey = new URLSearchParams(String(search || '')).get('card');
+  if (!rawCardKey) return '';
+  const cardKey = normalizeKey(rawCardKey);
+  return isPlausibleKey(cardKey) ? cardKey : '';
+}
+
+function prefillCardKeyFromUrl() {
+  const cardKey = getCardKeyFromUrl(location.search);
+  if (!cardKey) return;
+
+  $('#card-key').value = cardKey;
+  const params = new URLSearchParams(location.search);
+  params.delete('card');
+  const query = params.toString();
+  history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+}
+
 function canRedeemCard(data) {
   const status = Number(data?.status);
   return status === 4 || (data?.valid === true && status === 0);
@@ -526,12 +544,14 @@ function bindEvents() {
 if (typeof document !== 'undefined') {
   configureBrand();
   bindEvents();
+  prefillCardKeyFromUrl();
 }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildRedeemPayload,
     canRedeemCard,
+    getCardKeyFromUrl,
     getCardStatus,
     isPlausibleKey,
     maskKey,

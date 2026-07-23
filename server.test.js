@@ -12,6 +12,7 @@ const {
 const {
   buildRedeemPayload,
   canRedeemCard,
+  getCardKeyFromUrl,
   getCardStatus,
   isPlausibleKey,
   maskKey,
@@ -74,6 +75,14 @@ test('product-prefixed card keys are normalized and old card keys are rejected',
   assert.match(validateProxyPayload('/api/v1/verify-cardkey', {
     cardKey: 'AAAAAAAAAAAAAAAA',
   }), /cardKey/);
+});
+
+test('card links prefill only valid product-prefixed card keys', () => {
+  assert.equal(getCardKeyFromUrl('?card=Plus-aaaaaaaaaaaaaaaa'), TEST_CARD_KEY);
+  assert.equal(getCardKeyFromUrl('?source=customer&card=Pro5x-bbbbbbbbbbbbbbbb'), SECOND_TEST_CARD_KEY);
+  assert.equal(getCardKeyFromUrl('?card=AAAAAAAAAAAAAAAA'), '');
+  assert.equal(getCardKeyFromUrl('?card=invalid'), '');
+  assert.equal(getCardKeyFromUrl(''), '');
 });
 
 test('Session JSON parser identifies the recharge account before submission', () => {
