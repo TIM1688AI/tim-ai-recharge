@@ -7,6 +7,7 @@
 - 最多 100 张卡密批量查询
 - 响应式布局与完整的错误提示
 - 使用用户粘贴的 ChatGPT Session JSON 完成充值
+- 在页面底部实时展示 PLUS、PRO 5x 和 Pro 20x 的库存/排队状态
 
 卡密统一使用“产品前缀-16 位字母或数字”格式，例如 `Plus-AAAAAAAAAAAAAAAA` 或 `Pro5x-BBBBBBBBBBBBBBBB`。网站不再接受旧的纯 16 位卡密。
 
@@ -67,4 +68,4 @@ npm test
 
 Session JSON 仅保存在当前页面内存中，刷新或关闭页面后清除，不写入 localStorage。提交充值时会作为 `accountSession` 发送到配置的 jzai16888 API。
 
-本地服务仅代理 `verify-cardkey`、`redeem` 和 `cardkey/batch-status` 三个白名单接口。代理会校验 JSON 请求结构、限制请求体大小，并对每个客户端和整个服务执行 60 秒滑动窗口保护性限流。
+本地服务仅代理 `verify-cardkey`、`redeem`、`cardkey/batch-status` 和只读的 `inventory-status` 四个白名单接口。代理会校验 JSON 请求结构、限制请求体大小，并对每个客户端和整个服务执行 60 秒滑动窗口保护性限流。

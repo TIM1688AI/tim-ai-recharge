@@ -213,6 +213,16 @@ textarea:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(207,111,
 .security-card li b { font-size: 13px; }
 .security-card li span { color: #94a69e; font-size: 11px; }
 
+.inventory-strip { width: min(1100px, calc(100% - 48px)); margin: -36px auto 26px; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.inventory-badge { min-height: 44px; padding: 10px 15px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; border: 1px solid #d8dfe8; border-radius: 12px; background: rgba(255,253,248,.88); box-shadow: 0 8px 24px rgba(56,47,38,.05); font-size: 13px; }
+.inventory-product { font-size: 15px; }
+.inventory-product.plus { color: #5a45eb; }
+.inventory-product.prolite { color: #008cac; }
+.inventory-product.pro { color: #7b2be2; }
+.inventory-badge span[data-state="queued"] { color: #e66b16; }
+.inventory-badge span[data-state="available"] { color: #32805c; font-weight: 600; }
+.inventory-badge span[data-state="empty"], .inventory-badge span[data-state="maintenance"] { color: #9a6540; }
+
 footer { width: min(1100px, calc(100% - 48px)); min-height: 86px; margin: 0 auto; display: flex; align-items: center; justify-content: center; border-top: 1px solid #e0ddd7; color: #6f6962; font-size: 12px; letter-spacing: .08em; }
 footer p { margin: 0; }
 
@@ -259,6 +269,8 @@ footer p { margin: 0; }
   .guide-side { padding: 24px 20px; }
   .security-card { gap: 38px; padding: 38px 28px; }
   .security-copy h2 { font-size: 29px; }
+  .inventory-strip { width: min(100% - 28px, 1100px); margin-top: -46px; gap: 8px; }
+  .inventory-badge { flex: 1 1 145px; padding: 9px 11px; font-size: 12px; }
   footer { min-height: 74px; padding: 18px 0; }
 }
 

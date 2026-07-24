@@ -13,6 +13,7 @@ const {
   buildRedeemPayload,
   canRedeemCard,
   getCardKeyFromUrl,
+  getInventoryLabel,
   getCardStatus,
   isPlausibleKey,
   maskKey,
@@ -85,6 +86,13 @@ test('card links prefill only valid product-prefixed card keys', () => {
   assert.equal(getCardKeyFromUrl(''), '');
 });
 
+test('inventory labels match queue and stock states', () => {
+  assert.deepEqual(getInventoryLabel(0, 12), { kind: 'queued', text: '需排队 13 位' });
+  assert.deepEqual(getInventoryLabel(2, 0), { kind: 'available', text: '无需排队' });
+  assert.deepEqual(getInventoryLabel(0, 0), { kind: 'empty', text: '暂无库存' });
+  assert.deepEqual(getInventoryLabel(3, 0, true), { kind: 'maintenance', text: '通道维护中' });
+});
+
 test('Session JSON parser identifies the recharge account before submission', () => {
   const parsed = parseSessionJsonValue(JSON.stringify({
     user: { email: 'member@example.com' },
@@ -142,6 +150,13 @@ test('HTTP boundary enforces methods, JSON content type, validation, and rate li
   assert.equal(wrongMethod.status, 405);
   assert.match(wrongMethod.headers['content-security-policy'], /https:\/\/jzai16888\.com/);
   assert.doesNotMatch(wrongMethod.headers['content-security-policy'], /jzgopay/);
+
+  const inventoryWrongMethod = await request(server, {
+    path: '/api-proxy/inventory-status',
+    method: 'POST',
+  });
+  assert.equal(inventoryWrongMethod.status, 405);
+  assert.equal(inventoryWrongMethod.headers.allow, 'GET');
 
   const wrongType = await request(server, {
     path: '/api-proxy/verify-cardkey',

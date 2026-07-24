@@ -93,6 +93,51 @@ function getCardKeyFromUrl(search) {
   return isPlausibleKey(cardKey) ? cardKey : '';
 }
 
+function getInventoryLabel(availableValue, queuedValue, maintenance = false) {
+  if (maintenance) return { kind: 'maintenance', text: '通道维护中' };
+  const available = Math.max(0, Math.floor(Number(availableValue) || 0));
+  const queued = Math.max(0, Math.floor(Number(queuedValue) || 0));
+  if (queued > 0) return { kind: 'queued', text: `需排队 ${queued + 1} 位` };
+  if (available > 0) return { kind: 'available', text: '无需排队' };
+  return { kind: 'empty', text: '暂无库存' };
+}
+
+async function loadInventoryStatus() {
+  const section = $('#inventory-status');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(`${CONFIG.proxyBase}/inventory-status`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.code !== 0 || !payload.data || typeof payload.data !== 'object') {
+      throw new Error('库存状态不可用');
+    }
+
+    const data = payload.data;
+    const products = [
+      ['#inventory-plus', data.plusAvailable, data.plusQueued],
+      ['#inventory-prolite', data.proliteAvailable, data.proliteQueued],
+      ['#inventory-pro', data.proAvailable, data.proQueued],
+    ];
+    products.forEach(([selector, available, queued]) => {
+      const status = getInventoryLabel(available, queued, data.maintenance === true);
+      const element = $(selector);
+      element.textContent = status.text;
+      element.dataset.state = status.kind;
+    });
+    section.classList.remove('hidden');
+  } catch {
+    section.classList.add('hidden');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function prefillCardKeyFromUrl() {
   const cardKey = getCardKeyFromUrl(location.search);
   if (!cardKey) return;
@@ -545,6 +590,7 @@ if (typeof document !== 'undefined') {
   configureBrand();
   bindEvents();
   prefillCardKeyFromUrl();
+  loadInventoryStatus();
 }
 
 if (typeof module !== 'undefined' && module.exports) {
@@ -552,6 +598,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildRedeemPayload,
     canRedeemCard,
     getCardKeyFromUrl,
+    getInventoryLabel,
     getCardStatus,
     isPlausibleKey,
     maskKey,

@@ -17,10 +17,14 @@ const apiRoutes = new Map([
   ['/api-proxy/redeem', '/api/v1/redeem'],
   ['/api-proxy/cardkey/batch-status', '/api/v1/cardkey/batch-status'],
 ]);
+const readOnlyApiRoutes = new Map([
+  ['/api-proxy/inventory-status', '/api/v1/inventory-status'],
+]);
 const rateLimitRules = new Map([
   ['/api-proxy/verify-cardkey', { perIp: 10, global: 10, rawPerIp: 30 }],
   ['/api-proxy/redeem', { perIp: 5, global: 5, rawPerIp: 30 }],
   ['/api-proxy/cardkey/batch-status', { perIp: 10, global: 10, rawPerIp: 30 }],
+  ['/api-proxy/inventory-status', { perIp: 30, global: 300, rawPerIp: 60 }],
 ]);
 const rateLimitBuckets = new Map();
 const rateLimitWindowMs = 60 * 1000;
@@ -211,6 +215,42 @@ function proxyApi(request, response, upstreamPath, publicPath) {
   });
 }
 
+function proxyReadOnlyApi(request, response, upstreamPath, publicPath) {
+  if (request.method !== 'GET') {
+    response.writeHead(405, { ...securityHeaders, Allow: 'GET' }).end('Method not allowed');
+    return;
+  }
+  if (!enforceRateLimit(request, response, publicPath, { phase: 'raw' })) return;
+  if (!enforceRateLimit(request, response, publicPath)) return;
+
+  const upstream = https.request({
+    hostname: upstreamHostname,
+    port: 443,
+    path: upstreamPath,
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'Tim-AI-Recharge/1.0',
+    },
+  }, (upstreamResponse) => {
+    response.writeHead(upstreamResponse.statusCode || 502, {
+      ...securityHeaders,
+      'Content-Type': upstreamResponse.headers['content-type'] || 'application/json; charset=utf-8',
+    });
+    upstreamResponse.pipe(response);
+  });
+  response.on('close', () => {
+    if (!response.writableEnded) upstream.destroy(new Error('Client disconnected'));
+  });
+  upstream.setTimeout(10000, () => upstream.destroy(new Error('Upstream timeout')));
+  upstream.on('error', () => {
+    if (!response.headersSent && !response.destroyed) {
+      sendJson(response, 502, { code: 50200, message: '库存状态暂时不可用' });
+    } else if (!response.destroyed) response.destroy();
+  });
+  upstream.end();
+}
+
 function createServer() {
   return http.createServer((request, response) => {
   let pathname;
@@ -223,6 +263,11 @@ function createServer() {
 
   if (apiRoutes.has(pathname)) {
     proxyApi(request, response, apiRoutes.get(pathname), pathname);
+    return;
+  }
+
+  if (readOnlyApiRoutes.has(pathname)) {
+    proxyReadOnlyApi(request, response, readOnlyApiRoutes.get(pathname), pathname);
     return;
   }
 
