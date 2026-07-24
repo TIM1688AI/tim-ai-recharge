@@ -170,18 +170,27 @@
       </section>
     </main>
 
-    <section class="inventory-strip hidden" id="inventory-status" aria-label="实时库存凭证状态" aria-live="polite">
-      <div class="inventory-badge">
-        <strong class="inventory-product plus">PLUS</strong>
-        <span id="inventory-plus"></span>
+    <section class="inventory-console hidden" id="inventory-status" aria-label="实时库存凭证状态" aria-live="polite">
+      <div class="inventory-console-head">
+        <div class="inventory-console-title">
+          <i aria-hidden="true"></i>
+          <div><strong>实时凭证通道</strong><span>LIVE CAPACITY NETWORK</span></div>
+        </div>
+        <div class="inventory-live"><i aria-hidden="true"></i> LIVE</div>
       </div>
-      <div class="inventory-badge">
-        <strong class="inventory-product prolite">PRO 5x</strong>
-        <span id="inventory-prolite"></span>
-      </div>
-      <div class="inventory-badge">
-        <strong class="inventory-product pro">Pro 20x</strong>
-        <span id="inventory-pro"></span>
+      <div class="inventory-grid">
+        <article class="inventory-node plus">
+          <div class="inventory-node-head"><span>CHANNEL 01</span><i aria-hidden="true"></i></div>
+          <div class="inventory-node-body"><strong>PLUS</strong><span id="inventory-plus"></span></div>
+        </article>
+        <article class="inventory-node prolite">
+          <div class="inventory-node-head"><span>CHANNEL 02</span><i aria-hidden="true"></i></div>
+          <div class="inventory-node-body"><strong>PRO 5x</strong><span id="inventory-prolite"></span></div>
+        </article>
+        <article class="inventory-node pro">
+          <div class="inventory-node-head"><span>CHANNEL 03</span><i aria-hidden="true"></i></div>
+          <div class="inventory-node-body"><strong>Pro 20x</strong><span id="inventory-pro"></span></div>
+        </article>
       </div>
     </section>
 

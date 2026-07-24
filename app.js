@@ -385,6 +385,14 @@ function formatUsedTime(value) {
   }).format(date).replaceAll('/', '-');
 }
 
+function formatQueueMessage(value) {
+  const position = Number(value);
+  if (Number.isInteger(position) && position > 0) {
+    return `排队中，当前第 ${position} 位，凭证到达后自动服务`;
+  }
+  return '排队中，凭证到达后自动服务';
+}
+
 function formatExpiryDate(value) {
   if (!value) return '请在账户内查看';
   const date = new Date(value);
@@ -504,6 +512,24 @@ async function queryBatch() {
         usedTime.append(timeValue);
         meta.append(account, usedTime);
         row.append(meta);
+      } else if (statusInfo.kind === 'queued') {
+        const meta = document.createElement('div');
+        meta.className = 'batch-result-meta queue-meta';
+        const queuePosition = document.createElement('span');
+        queuePosition.className = 'queue-position';
+        queuePosition.textContent = formatQueueMessage(item.queuePosition);
+        meta.append(queuePosition);
+
+        if (item.externalEmail) {
+          const account = document.createElement('span');
+          account.className = 'queue-account';
+          account.append('排队账号：');
+          const accountValue = document.createElement('b');
+          accountValue.textContent = maskEmail(item.externalEmail);
+          account.append(accountValue);
+          meta.append(account);
+        }
+        row.append(meta);
       }
 
       const copy = document.createElement('button');
@@ -597,6 +623,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildRedeemPayload,
     canRedeemCard,
+    formatQueueMessage,
     getCardKeyFromUrl,
     getInventoryLabel,
     getCardStatus,

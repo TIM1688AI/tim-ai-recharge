@@ -8,6 +8,7 @@
 - 响应式布局与完整的错误提示
 - 使用用户粘贴的 ChatGPT Session JSON 完成充值
 - 在页面底部实时展示 PLUS、PRO 5x 和 Pro 20x 的库存/排队状态
+- 批量查询遇到排队卡密时展示当前位次和脱敏后的排队账号
 
 卡密统一使用“产品前缀-16 位字母或数字”格式，例如 `Plus-AAAAAAAAAAAAAAAA` 或 `Pro5x-BBBBBBBBBBBBBBBB`。网站不再接受旧的纯 16 位卡密。
 

@@ -12,6 +12,7 @@ const {
 const {
   buildRedeemPayload,
   canRedeemCard,
+  formatQueueMessage,
   getCardKeyFromUrl,
   getInventoryLabel,
   getCardStatus,
@@ -128,6 +129,13 @@ test('jzai16888 status extensions preserve redeem and batch behavior', () => {
     kind: 'retry',
     label: '充值失败，可重新提交',
   });
+});
+
+test('queued card results show position and tolerate missing position', () => {
+  assert.equal(formatQueueMessage(6), '排队中，当前第 6 位，凭证到达后自动服务');
+  assert.equal(formatQueueMessage('2'), '排队中，当前第 2 位，凭证到达后自动服务');
+  assert.equal(formatQueueMessage(null), '排队中，凭证到达后自动服务');
+  assert.equal(formatQueueMessage('unknown'), '排队中，凭证到达后自动服务');
 });
 
 test('proxy rejects malformed and unsupported input before upstream forwarding', () => {
