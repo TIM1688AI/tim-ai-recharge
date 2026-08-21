@@ -17,6 +17,7 @@ const staticFiles = new Map([
   ['/index.html', 'index.html'],
   ['/app.js', 'app.js'],
   ['/styles.css', 'styles.css'],
+  ['/assets/tim-letter-logo-web.png', 'assets/tim-letter-logo-web.png'],
 ]);
 
 const apiRoutes = new Map([

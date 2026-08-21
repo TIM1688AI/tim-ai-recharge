@@ -260,6 +260,11 @@ test('HTTP boundary enforces methods, content type, static allowlist, and rate l
   assert.equal(appAsset.status, 200);
   assert.match(appAsset.headers['cache-control'], /max-age=300/);
 
+  const logoAsset = await request(server, { path: '/assets/tim-letter-logo-web.png' });
+  assert.equal(logoAsset.status, 200);
+  assert.equal(logoAsset.headers['content-type'], 'image/png');
+  assert.ok(logoAsset.body.length > 0);
+
   for (const hiddenPath of ['/server.js', '/server.test.js', '/package.json', '/README.md', '/.git/HEAD']) {
     const hiddenFile = await request(server, { path: hiddenPath });
     assert.equal(hiddenFile.status, 404, `${hiddenPath} must not be publicly served`);

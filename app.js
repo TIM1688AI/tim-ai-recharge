@@ -1,5 +1,6 @@
 const CONFIG = {
   brandName: 'Tim AI',
+  pageTitle: 'Tim | GPT充值服务',
   proxyBase: '/api-proxy',
   requestTimeout: 25000,
   taskPollInterval: 5000,
@@ -33,7 +34,35 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 function configureBrand() {
   $$('[data-brand]').forEach((element) => { element.textContent = CONFIG.brandName; });
-  document.title = `${CONFIG.brandName} · AI 会员充值`;
+  document.title = CONFIG.pageTitle;
+}
+
+function startHandwrittenIntro() {
+  const note = $('#hero-handwritten');
+  if (!note) return;
+  const stage = note.closest('.hero-trust-stage');
+  const signature = $('.hero-signature', stage || document);
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let alreadySeen = false;
+  try {
+    alreadySeen = sessionStorage.getItem('tim-ai-handwritten-intro-seen') === '1';
+    if (!alreadySeen) sessionStorage.setItem('tim-ai-handwritten-intro-seen', '1');
+  } catch {
+    // Storage can be unavailable for local files or privacy-restricted browsers.
+  }
+  if (alreadySeen || reducedMotion) {
+    note.classList.add('is-written');
+    stage?.classList.add('is-written');
+    return;
+  }
+  note.classList.add('is-writing');
+  stage?.classList.add('is-writing');
+  signature?.addEventListener('animationend', () => {
+    note.classList.remove('is-writing');
+    note.classList.add('is-written');
+    stage?.classList.remove('is-writing');
+    stage?.classList.add('is-written');
+  }, { once: true });
 }
 
 function startHeroSubtitleRotation() {
@@ -96,6 +125,124 @@ function startHeroSubtitleRotation() {
     observer.observe(rotator);
   }
   schedule();
+}
+
+function setupEntranceMotion() {
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reducedMotion) return;
+
+  const tracked = [];
+  const splitText = (element, mode = 'character', interval = 32, baseDelay = 0) => {
+    if (!element || element.dataset.motionSplit === 'true') return;
+    const accessibleLabel = element.innerText.replace(/\s+/g, ' ').trim();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        return node.nodeValue?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+    let unitIndex = 0;
+
+    textNodes.forEach((textNode) => {
+      const wrapper = document.createElement('span');
+      wrapper.className = 'motion-fragment';
+      wrapper.setAttribute('aria-hidden', 'true');
+      const segments = mode === 'word'
+        ? textNode.nodeValue.split(/(\s+)/)
+        : Array.from(textNode.nodeValue);
+
+      segments.forEach((segment) => {
+        if (!segment || /^\s+$/.test(segment)) {
+          wrapper.append(document.createTextNode(segment));
+          return;
+        }
+        const unit = document.createElement('span');
+        unit.className = 'motion-unit';
+        unit.textContent = segment;
+        unit.style.setProperty('--motion-delay', `${baseDelay + Math.min(unitIndex * interval, 620)}ms`);
+        wrapper.append(unit);
+        unitIndex += 1;
+      });
+      textNode.replaceWith(wrapper);
+    });
+
+    if (accessibleLabel) element.setAttribute('aria-label', accessibleLabel);
+    element.dataset.motionSplit = 'true';
+    element.classList.add('motion-text');
+    element.dataset.motionSettle = String(baseDelay + Math.min(unitIndex * interval, 620) + 900);
+    tracked.push(element);
+  };
+
+  const registerReveal = (selector, { delay = 0, mockup = false } = {}) => {
+    $$(selector).forEach((element, index) => {
+      element.classList.add('motion-reveal');
+      if (mockup) element.classList.add('motion-mockup');
+      element.style.setProperty('--motion-delay', `${delay + index * 90}ms`);
+      element.dataset.motionSettle = String(delay + index * 90 + 900);
+      tracked.push(element);
+    });
+  };
+
+  const registerGroup = (selector, { delay = 0, interval = 70 } = {}) => {
+    $$(selector).forEach((group) => {
+      const children = [...group.children];
+      if (!children.length) return;
+      group.classList.add('motion-stagger');
+      children.forEach((child, index) => {
+        child.classList.add('motion-item');
+        child.style.setProperty('--motion-delay', `${delay + Math.min(index * interval, 420)}ms`);
+      });
+      group.dataset.motionSettle = String(delay + Math.min((children.length - 1) * interval, 420) + 900);
+      tracked.push(group);
+    });
+  };
+
+  registerReveal('.site-header', { delay: 0 });
+  registerReveal('.hero-copy', { delay: 50 });
+  splitText($('.hero h1'), 'character', 28, 90);
+  registerReveal('.hero-handwritten', { delay: 180 });
+  registerGroup('.hero-trust', { delay: 260, interval: 65 });
+  registerReveal('.how-it-works, .recharge-shell', { mockup: true });
+  registerGroup('.session-guide', { delay: 100, interval: 80 });
+  registerGroup('.mode-tabs', { delay: 100, interval: 80 });
+  registerGroup('.steps', { delay: 150, interval: 80 });
+  registerGroup('.utility-actions', { delay: 0, interval: 70 });
+  registerReveal('.hero-subtitle-rotator', { delay: 180 });
+
+  const settle = (element) => {
+    const delay = Number(element.dataset.motionSettle || 1000);
+    window.setTimeout(() => {
+      element.classList.remove('motion-reveal', 'motion-mockup', 'motion-text', 'motion-stagger', 'is-motion-visible');
+      element.style.removeProperty('--motion-delay');
+      element.querySelectorAll('.motion-item, .motion-unit').forEach((child) => {
+        child.classList.remove('motion-item', 'motion-unit');
+        child.style.removeProperty('--motion-delay');
+      });
+      delete element.dataset.motionSettle;
+    }, delay);
+  };
+
+  const reveal = (element) => {
+    if (element.dataset.motionPlayed === 'true') return;
+    element.dataset.motionPlayed = 'true';
+    requestAnimationFrame(() => element.classList.add('is-motion-visible'));
+    settle(element);
+  };
+
+  if (!('IntersectionObserver' in window)) {
+    requestAnimationFrame(() => tracked.forEach(reveal));
+    return;
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      reveal(entry.target);
+      observer.unobserve(entry.target);
+    });
+  }, { threshold: 0.12, rootMargin: '0px' });
+  tracked.forEach((element) => observer.observe(element));
 }
 
 function showToast(message, type = 'info') {
@@ -1390,6 +1537,8 @@ function bindEvents() {
 
 if (typeof document !== 'undefined') {
   configureBrand();
+  setupEntranceMotion();
+  startHandwrittenIntro();
   startHeroSubtitleRotation();
   bindEvents();
   prefillCardKeyFromUrl();
