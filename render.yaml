@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: tim-ai-recharge
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: CDK_API_BASE_URL
+        sync: false
+      - key: STATION_API_KEY
+        sync: false
+

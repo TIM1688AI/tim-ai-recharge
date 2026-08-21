@@ -1,0 +1,7 @@
+.env
+.env.*
+node_modules/
+*.log
+npm-debug.log*
+.impeccable/
+design-qa.md

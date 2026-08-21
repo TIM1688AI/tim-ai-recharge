@@ -27,11 +27,15 @@
         <div class="hero-copy">
           <div class="eyebrow"><i></i> TIM AI 自助充值</div>
           <h1>ChatGPT 官方会员 <span>自助充值</span></h1>
-          <p>输入卡密和 ChatGPT Session JSON，自动完成充值。</p>
+          <div class="hero-subtitle-rotator" id="hero-subtitle-rotator" role="group" aria-label="服务说明">
+            <p class="hero-subtitle active">提交充值任务后自动跟踪进度，完成状态清晰可查</p>
+            <p class="hero-subtitle" aria-hidden="true">正规渠道充值，让每个人都能轻松订阅ChatGPT会员</p>
+            <p class="hero-subtitle" aria-hidden="true">累计为 5000+ 位用户提供 ChatGPT 会员订阅服务</p>
+          </div>
           <div class="hero-trust">
-            <div><strong>3-5 min</strong><span>预计完成</span></div>
-            <div><strong>24H/7DAYS</strong><span>全天自助服务</span></div>
-            <div><strong>SSL</strong><span>Session 留存</span></div>
+            <div><strong>约 3–5 分钟</strong><span>预计完成</span></div>
+            <div><strong>7×24 小时</strong><span>全天自助服务</span></div>
+            <div><strong>SSL</strong><span>不留存 Session</span></div>
             <div><strong>5000+</strong><span>已服务客户</span></div>
           </div>
         </div>
@@ -40,20 +44,20 @@
           <section class="how-it-works guide-side" id="guide">
             <div class="section-heading">
               <span>使用指南</span>
-              <h2>两项信息，立即充值</h2>
+              <h2>两项信息，立即充值，进度可查</h2>
             </div>
             <div class="guide-grid">
               <article><span>01</span><div class="guide-icon">⌁</div><h3>输入充值卡密</h3><p>输入卡密并完成验证。</p></article>
               <article><span>02</span><div class="guide-icon">{ }</div><h3>复制 Session JSON</h3><p><a href="https://chatgpt.com/auth/login" target="_blank" rel="noopener noreferrer">登录 ChatGPT</a>，打开 <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer">Session 页面</a>并复制全部内容。</p></article>
-              <article><span>03</span><div class="guide-icon">✓</div><h3>开始充值</h3><p>粘贴 Session JSON，提交并等待结果。</p></article>
+              <article><span>03</span><div class="guide-icon">✓</div><h3>跟踪处理进度</h3><p>确认充值账号，提交后自动查看任务状态。</p></article>
             </div>
           </section>
 
           <div class="recharge-shell">
           <div class="shell-topline">
-            <div>
-              <span class="status-dot"></span>
-              <span>充值通道运行正常</span>
+            <div class="queue-console" id="queue-status" data-state="loading" aria-label="实时服务队列" aria-live="polite">
+              <i class="queue-status-dot" aria-hidden="true"></i>
+              <button class="queue-live-action" id="queue-live-label" type="button" disabled>正在获取队列状态…</button>
             </div>
             <span class="secure-badge">
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8V6a4.5 4.5 0 0 1 9 0v2m-9 0h9a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 14.5 17h-9A1.5 1.5 0 0 1 4 15.5v-6A1.5 1.5 0 0 1 5.5 8Z" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
@@ -61,16 +65,21 @@
             </span>
           </div>
 
+          <div class="announcement hidden" id="announcement" role="status">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13V9a2 2 0 0 1 2-2h2l7-3v14l-7-3H6a2 2 0 0 1-2-2Zm4 2v4H6v-4m12-5a3 3 0 0 1 0 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <span id="announcement-content"></span>
+          </div>
+
           <div class="mode-tabs" role="tablist" aria-label="服务模式">
             <button class="mode-tab active" id="single-tab" role="tab" data-panel="single-panel" aria-controls="single-panel" aria-selected="true" tabindex="0">单卡充值</button>
-            <button class="mode-tab" id="batch-tab" role="tab" data-panel="batch-panel" aria-controls="batch-panel" aria-selected="false" tabindex="-1">批量查询</button>
+            <button class="mode-tab" id="batch-tab" role="tab" data-panel="batch-panel" aria-controls="batch-panel" aria-selected="false" tabindex="-1">充值记录</button>
           </div>
 
           <section class="tab-panel active" id="single-panel" role="tabpanel" aria-labelledby="single-tab">
             <ol class="steps" aria-label="充值步骤">
               <li class="active" data-step="1"><b>1</b><span>验证卡密</span></li>
               <li data-step="2"><b>2</b><span>粘贴 Session</span></li>
-              <li data-step="3"><b>3</b><span>完成充值</span></li>
+              <li data-step="3"><b>3</b><span>跟踪进度</span></li>
             </ol>
 
             <form id="recharge-form" novalidate>
@@ -78,17 +87,28 @@
                 <label for="card-key">充值卡密</label>
                 <div class="input-wrap key-input">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5a4.95 4.95 0 1 1-2 7.52L5 21.5H2v-3l7.47-7.47A4.95 4.95 0 0 1 14.5 6.5Zm3 3h.01" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                  <input id="card-key" name="cardKey" maxlength="64" autocomplete="off" spellcheck="false" placeholder="请输入带产品前缀的充值卡密" />
+                  <input id="card-key" name="cardKey" maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入供应商提供的充值卡密" />
                   <button type="button" class="paste-btn" id="paste-key">粘贴</button>
                 </div>
-                <p class="field-note">格式：产品前缀-16 位字母或数字，例如 Plus-… 或 Pro5x-…</p>
+                <p class="field-note">支持供应商签发的不同卡密格式，最终状态以接口验证结果为准。</p>
                 <button class="primary-btn" id="verify-btn" type="button"><span>验证卡密</span><b>→</b></button>
               </div>
 
               <div class="form-section step-section hidden" data-section="2">
                 <div class="verified-card">
                   <div><span>卡密验证通过</span><b id="masked-card-key">•••• •••• •••• 0000</b></div>
-                  <button type="button" id="change-key">更换</button>
+                  <div class="verified-card-actions">
+                    <button class="hidden" type="button" id="refresh-cdk-btn">换一张卡密</button>
+                    <button type="button" id="change-key">更换输入</button>
+                  </div>
+                </div>
+                <div class="refresh-result hidden" id="refresh-result" role="status" aria-live="polite">
+                  <div>
+                    <span>新卡密，请立即复制并保存</span>
+                    <code id="refreshed-card-code"></code>
+                    <small id="refresh-remaining-note"></small>
+                  </div>
+                  <button class="secondary-btn" type="button" id="copy-refreshed-card">复制新卡密</button>
                 </div>
                 <div class="session-guide" aria-labelledby="session-guide-title">
                   <div class="session-guide-head">
@@ -126,35 +146,54 @@
                   </div>
                   <p class="field-note session-note">内容应以 { 开头并以 } 结尾。</p>
                 </div>
-                <button class="primary-btn" id="redeem-btn" type="submit"><span>开始充值</span><b>→</b></button>
+                <button class="primary-btn" id="redeem-btn" type="submit"><span>检查账号并继续</span><b>→</b></button>
               </div>
 
-              <div class="form-section result-section hidden" data-section="3" role="status" aria-live="polite">
-                <div class="result-icon success">
-                  <svg viewBox="0 0 48 48" aria-hidden="true">
-                    <path d="M42 21.8V24a18 18 0 1 1-10.7-16.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" />
-                    <path d="m17 23 5 5L41 9" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+              <div class="form-section result-section hidden" data-section="3" data-state="processing" role="status" aria-live="polite">
+                <div class="result-icon" id="task-result-icon">
+                  <svg class="task-icon-processing" viewBox="0 0 48 48" aria-hidden="true">
+                    <circle cx="24" cy="24" r="18" fill="none" stroke="currentColor" stroke-width="3" />
+                    <path d="M24 14v11l7 4" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <svg class="task-icon-completed" viewBox="0 0 48 48" aria-hidden="true">
+                    <circle cx="24" cy="24" r="18" fill="none" stroke="currentColor" stroke-width="3" />
+                    <path d="m16 24 5.5 5.5L33 18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <svg class="task-icon-failed" viewBox="0 0 48 48" aria-hidden="true">
+                    <circle cx="24" cy="24" r="18" fill="none" stroke="currentColor" stroke-width="3" />
+                    <path d="M24 14v13m0 7v.1" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
                   </svg>
                 </div>
-                <h2>充值成功</h2>
-                <p class="expiry-line">订阅有效期至 <strong id="expires-date">—</strong></p>
-                <div class="success-notice">
+                <h2 id="task-result-title">充值申请已提交</h2>
+                <p class="task-result-copy" id="task-result-copy">任务正在后台处理，页面会自动更新进度。</p>
+                <dl class="task-details">
+                  <div><dt>任务编号</dt><dd id="task-id">—</dd></div>
+                  <div><dt>当前状态</dt><dd id="task-status">等待状态更新</dd></div>
+                  <div><dt>充值账号</dt><dd id="task-account">等待识别</dd></div>
+                  <div><dt>状态时间</dt><dd id="task-time">—</dd></div>
+                </dl>
+                <div class="task-failure hidden" id="task-failure">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5m0 3.2v.1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
-                  <span>充值成功后，请回到 ChatGPT，点击升级/恢复订阅或重新打开 App 刷新状态。</span>
+                  <span id="task-failure-text"></span>
                 </div>
-                <button class="secondary-btn restart-btn" type="button" id="restart-btn">再充一张</button>
+                <div class="task-actions">
+                  <button class="primary-btn" type="button" id="refresh-task-btn"><span>刷新处理进度</span><b>↻</b></button>
+                  <button class="primary-btn hidden" type="button" id="retry-task-btn"><span>重新提交</span><b>→</b></button>
+                  <button class="danger-btn hidden" type="button" id="cancel-task-btn"><span>取消排队任务</span></button>
+                  <button class="secondary-btn restart-btn" type="button" id="restart-btn">充值其他卡密</button>
+                </div>
               </div>
             </form>
           </section>
 
           <section class="tab-panel" id="batch-panel" role="tabpanel" aria-labelledby="batch-tab">
             <div class="batch-head">
-              <div><h2>批量查询卡密</h2><p id="batch-limit-note">每行输入一个卡密，单次最多查询 100 个</p></div>
+              <div><h2>批量查询充值记录</h2><p id="batch-limit-note">查询已提交任务；未提交的有效卡密会显示“暂无提交记录”</p></div>
               <span id="key-count">0 / 100</span>
             </div>
-            <textarea id="batch-keys" aria-describedby="batch-limit-note" placeholder="Plus-AAAAAAAAAAAAAAAA&#10;Pro5x-BBBBBBBBBBBBBBBB" spellcheck="false"></textarea>
+            <textarea id="batch-keys" aria-describedby="batch-limit-note" placeholder="每行输入一个卡密，最多 100 个" spellcheck="false"></textarea>
             <div class="batch-button-row">
-              <button class="primary-btn" id="batch-btn" type="button"><span>查询卡密状态</span><b>→</b></button>
+              <button class="primary-btn" id="batch-btn" type="button"><span>查询充值记录</span><b>→</b></button>
               <button class="secondary-btn batch-clear-btn" id="batch-clear" type="button" disabled><span>清空卡密查询</span><b aria-hidden="true">↺</b></button>
             </div>
             <div class="batch-summary hidden" id="batch-summary" aria-label="查询统计"></div>
@@ -163,39 +202,24 @@
 
             <div class="privacy-note">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 20 7v5.5c0 4.3-2.8 7.2-8 8.5-5.2-1.3-8-4.2-8-8.5V7l8-3.5Zm-3 8.7 2 2 4.3-4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              <p><b>Session JSON 仅用于本次充值</b><span>页面刷新或关闭后自动清除，不写入本地存储。</span></p>
+              <p><b>浏览器端不保存 Session JSON</b><span>提交后由充值服务处理，本站不写入本地存储。</span></p>
             </div>
           </div>
         </div>
       </section>
     </main>
 
-    <section class="inventory-console hidden" id="inventory-status" aria-label="实时库存凭证状态" aria-live="polite">
-      <div class="inventory-console-head">
-        <div class="inventory-console-title">
-          <i aria-hidden="true"></i>
-          <div><strong>实时凭证通道</strong><span>LIVE CAPACITY NETWORK</span></div>
-        </div>
-        <div class="inventory-live"><i aria-hidden="true"></i> LIVE</div>
-      </div>
-      <div class="inventory-grid">
-        <article class="inventory-node plus">
-          <div class="inventory-node-head"><span>CHANNEL 01</span><i aria-hidden="true"></i></div>
-          <div class="inventory-node-body"><strong>PLUS</strong><span id="inventory-plus"></span></div>
-        </article>
-        <article class="inventory-node prolite">
-          <div class="inventory-node-head"><span>CHANNEL 02</span><i aria-hidden="true"></i></div>
-          <div class="inventory-node-body"><strong>PRO 5x</strong><span id="inventory-prolite"></span></div>
-        </article>
-        <article class="inventory-node pro">
-          <div class="inventory-node-head"><span>CHANNEL 03</span><i aria-hidden="true"></i></div>
-          <div class="inventory-node-body"><strong>Pro 20x</strong><span id="inventory-pro"></span></div>
-        </article>
+    <section class="utility-dock" aria-label="充值服务快捷入口">
+      <div class="utility-actions" role="group" aria-label="快捷操作">
+        <button class="utility-action" id="quick-task-query" type="button" data-tool="task" aria-controls="batch-panel">任务查询</button>
+        <button class="utility-action" id="quick-subscription-query" type="button" data-tool="subscription" aria-haspopup="dialog" aria-controls="quick-tool-modal">订阅查询</button>
+        <button class="utility-action" id="quick-refresh-cdk" type="button" data-tool="refresh" aria-haspopup="dialog" aria-controls="quick-tool-modal">更换卡密</button>
+        <button class="utility-action" id="quick-cancel-task" type="button" data-tool="cancel" aria-haspopup="dialog" aria-controls="quick-tool-modal">取消任务</button>
       </div>
     </section>
 
     <footer>
-      <p>正规渠道 · 安全可靠 · 即时到账</p>
+      <p>安全传输 · 进度可查 · 状态透明</p>
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -210,7 +234,7 @@
           <span>充值账号</span>
           <strong id="confirm-account-value"></strong>
         </div>
-        <p class="account-confirm-note">请仔细核对账号，确认后才会提交充值。</p>
+        <p class="account-confirm-note" id="account-confirm-note">请仔细核对账号，确认后才会提交充值。</p>
         <div class="modal-actions">
           <button class="secondary-btn" id="cancel-account-redeem" type="button">返回检查</button>
           <button class="primary-btn" id="confirm-account-redeem" type="button"><span>确认充值</span><b>→</b></button>
@@ -218,15 +242,68 @@
       </div>
     </div>
 
-    <div class="modal-backdrop hidden" id="override-modal" role="dialog" aria-modal="true" aria-labelledby="override-title">
-      <div class="modal">
-        <button class="modal-close override-modal-close" type="button" aria-label="关闭">×</button>
+    <div class="modal-backdrop hidden" id="subscription-modal" role="dialog" aria-modal="true" aria-labelledby="subscription-title">
+      <div class="modal subscription-modal">
+        <button class="modal-close subscription-modal-close" type="button" aria-label="关闭">×</button>
         <div class="modal-icon">!</div>
-        <h2 id="override-title">确认覆盖现有订阅？</h2>
-        <p>系统检测到此账户已有会员套餐。继续可能改变当前订阅状态或有效期，请确认后操作。</p>
+        <h2 id="subscription-title">当前账号已有会员</h2>
+        <p>处理服务会在执行时实时复查订阅。已有会员的账号通常无需重复充值，继续提交可能以失败结束。</p>
+        <dl class="subscription-details">
+          <div><dt>账号</dt><dd id="subscription-account">—</dd></div>
+          <div><dt>当前套餐</dt><dd id="subscription-plan">—</dd></div>
+          <div><dt>有效期至</dt><dd id="subscription-expiry">—</dd></div>
+        </dl>
         <div class="modal-actions">
-          <button class="secondary-btn" id="cancel-override" type="button">暂不充值</button>
-          <button class="danger-btn" id="confirm-override" type="button">确认覆盖并继续</button>
+          <button class="secondary-btn" id="close-subscription" type="button">返回检查账号</button>
+          <button class="primary-btn" id="continue-subscription" type="button"><span>仍要继续</span><b>→</b></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop hidden" id="operation-modal" role="dialog" aria-modal="true" aria-labelledby="operation-title">
+      <div class="modal operation-modal">
+        <button class="modal-close operation-modal-close" type="button" aria-label="关闭">×</button>
+        <div class="modal-icon operation-modal-icon" aria-hidden="true">!</div>
+        <h2 id="operation-title">确认操作</h2>
+        <p id="operation-copy"></p>
+        <p class="operation-note" id="operation-note"></p>
+        <div class="modal-actions">
+          <button class="secondary-btn" id="cancel-operation" type="button">暂不操作</button>
+          <button class="primary-btn" id="confirm-operation" type="button"><span>确认</span><b>→</b></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop hidden" id="quick-tool-modal" role="dialog" aria-modal="true" aria-labelledby="quick-tool-title">
+      <div class="modal quick-tool-modal">
+        <button class="modal-close quick-tool-modal-close" type="button" aria-label="关闭">×</button>
+        <h2 id="quick-tool-title">快捷操作</h2>
+        <p id="quick-tool-copy"></p>
+        <div class="quick-tool-field" id="quick-card-field">
+          <label for="quick-card-input">充值卡密</label>
+          <input id="quick-card-input" maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入当前有效卡密" />
+        </div>
+        <div class="quick-tool-field hidden" id="quick-subscription-field">
+          <label for="quick-subscription-input">Session JSON 或 accessToken</label>
+          <textarea id="quick-subscription-input" autocomplete="off" spellcheck="false" placeholder="粘贴完整 Session JSON，或直接粘贴 accessToken"></textarea>
+          <small>内容仅用于本次查询，不会写入浏览器存储。</small>
+        </div>
+        <div class="quick-tool-result hidden" id="quick-tool-result" aria-live="polite">
+          <p id="quick-tool-message"></p>
+          <dl class="subscription-details hidden" id="quick-subscription-details">
+            <div><dt>账号</dt><dd id="quick-subscription-account">—</dd></div>
+            <div><dt>当前套餐</dt><dd id="quick-subscription-plan">—</dd></div>
+            <div><dt>有效期至</dt><dd id="quick-subscription-expiry">—</dd></div>
+          </dl>
+          <div class="quick-new-code hidden" id="quick-new-code">
+            <span>新卡密，请立即复制并保存</span>
+            <code id="quick-new-code-value"></code>
+            <button class="secondary-btn" id="copy-quick-new-code" type="button">复制新卡密</button>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary-btn" id="close-quick-tool" type="button">关闭</button>
+          <button class="primary-btn" id="submit-quick-tool" type="button"><span>继续</span></button>
         </div>
       </div>
     </div>
