@@ -38,7 +38,16 @@
         <div class="service-layout">
           <section class="how-it-works guide-side" id="guide">
             <div class="section-heading">
-              <h2>使用指南</h2>
+              <div class="section-title">
+                <span class="section-title-icon" aria-hidden="true">
+                  <svg viewBox="0 0 32 32" fill="none">
+                    <path d="M4.5 7.5c4.6-.8 8.2.4 11.5 3.4v14.6c-3.3-2.9-6.9-4-11.5-3.2V7.5Z" />
+                    <path d="M27.5 7.5c-4.6-.8-8.2.4-11.5 3.4v14.6c3.3-2.9 6.9-4 11.5-3.2V7.5Z" />
+                    <path d="M20 12.2c1.4-.8 2.8-1.2 4.3-1.2M20 15.8c1.4-.8 2.8-1.2 4.3-1.2M20 19.4c1.4-.8 2.8-1.2 4.3-1.2" />
+                  </svg>
+                </span>
+                <h2>使用指南</h2>
+              </div>
               <ol class="guide-heading-flow" aria-label="充值流程概要">
                 <li>两项信息</li>
                 <li>高效充值</li>
@@ -194,9 +203,8 @@
             <div class="batch-button-row">
               <button class="primary-btn" id="batch-btn" type="button"><span>查询充值记录</span><b>→</b></button>
               <button class="secondary-btn batch-clear-btn" id="batch-clear" type="button" disabled><span>清空卡密查询</span><b aria-hidden="true">↺</b></button>
+              <button class="secondary-btn batch-view-btn hidden" id="batch-view-results" type="button" aria-haspopup="dialog" aria-controls="batch-results-modal"><span>查看上次查询结果</span><b aria-hidden="true">↗</b></button>
             </div>
-            <div class="batch-summary hidden" id="batch-summary" aria-label="查询统计"></div>
-            <div class="batch-results hidden" id="batch-results"></div>
           </section>
 
             <div class="privacy-note">
@@ -308,6 +316,24 @@
         <div class="modal-actions">
           <button class="secondary-btn" id="close-quick-tool" type="button">关闭</button>
           <button class="primary-btn" id="submit-quick-tool" type="button"><span>继续</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop hidden" id="batch-results-modal" role="dialog" aria-modal="true" aria-labelledby="batch-results-title" aria-describedby="batch-results-description">
+      <div class="modal batch-results-modal">
+        <div class="batch-results-modal-head">
+          <div>
+            <h2 id="batch-results-title">充值记录查询结果</h2>
+            <p id="batch-results-description">按输入顺序展示，每条记录均可单独复制卡密。</p>
+          </div>
+          <button class="modal-close batch-results-modal-close" type="button" aria-label="关闭查询结果">×</button>
+        </div>
+        <div class="batch-summary" id="batch-summary" aria-label="查询统计"></div>
+        <div class="batch-results" id="batch-results" tabindex="0" aria-label="充值记录列表"></div>
+        <div class="batch-results-modal-foot">
+          <span id="batch-results-count">共 0 条查询结果</span>
+          <button class="secondary-btn" id="close-batch-results" type="button">关闭结果</button>
         </div>
       </div>
     </div>

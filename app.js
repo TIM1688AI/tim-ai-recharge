@@ -25,6 +25,7 @@ const state = {
   quickTool: '',
   quickToolStage: 'input',
   quickToolCardKey: '',
+  batchModalReturnFocus: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -186,6 +187,7 @@ function prefillCardKeyFromUrl() {
 
 function syncModalIsolation() {
   const openModal = $('.modal-backdrop:not(.hidden)');
+  document.body.classList.toggle('modal-open', Boolean(openModal));
   [...document.body.children].forEach((element) => {
     if (element.tagName === 'SCRIPT') return;
     element.inert = Boolean(openModal && element !== openModal);
@@ -1066,8 +1068,7 @@ function updateBatchControls() {
   $('#key-count').textContent = `${count} / 100`;
   $('#key-count').classList.toggle('over-limit', count > 100);
   $('#batch-clear').disabled = $('#batch-keys').value.length === 0;
-  $('#batch-summary').classList.add('hidden');
-  $('#batch-results').classList.add('hidden');
+  $('#batch-view-results').classList.add('hidden');
 }
 
 function clearBatchKeys() {
@@ -1125,7 +1126,20 @@ function renderBatchSummary(items) {
     card.append(title, value);
     return card;
   }));
-  summary.classList.remove('hidden');
+}
+
+function openBatchResultsModal({ returnFocus } = {}) {
+  state.batchModalReturnFocus = returnFocus || document.activeElement;
+  setModalVisibility($('#batch-results-modal'), true);
+  $('.batch-results-modal-close').focus();
+}
+
+function closeBatchResultsModal({ restoreFocus = true } = {}) {
+  setModalVisibility($('#batch-results-modal'), false);
+  if (restoreFocus && state.batchModalReturnFocus instanceof HTMLElement) {
+    state.batchModalReturnFocus.focus();
+  }
+  state.batchModalReturnFocus = null;
 }
 
 function createResultMeta(item, status) {
@@ -1147,15 +1161,18 @@ function createResultMeta(item, status) {
     taskId.append(value);
     meta.append(taskId);
   }
-  const time = item.completed_at || item.updated_at || item.created_at;
-  if (time) {
+  const appendTime = (label, time) => {
+    if (!time) return;
     const timeRow = document.createElement('span');
-    timeRow.append(status.kind === 'completed' ? '完成时间：' : '更新时间：');
+    timeRow.append(`${label}：`);
     const value = document.createElement('b');
     value.textContent = formatDateTime(time);
     timeRow.append(value);
     meta.append(timeRow);
-  }
+  };
+  appendTime('提交时间', item.created_at);
+  if (item.updated_at && item.updated_at !== item.created_at) appendTime('更新时间', item.updated_at);
+  if (status.kind === 'completed') appendTime('完成时间', item.completed_at);
   if (status.kind === 'failed' && item.failure_reason) {
     const reason = document.createElement('span');
     reason.className = 'failure-reason';
@@ -1173,8 +1190,7 @@ async function queryBatch() {
   if (!codes.length) return showToast('请至少输入一个卡密', 'error');
   if (codes.some((key) => !isPlausibleKey(key))) return showToast('列表中存在长度异常的卡密', 'error');
 
-  $('#batch-summary').classList.add('hidden');
-  $('#batch-results').classList.add('hidden');
+  $('#batch-view-results').classList.add('hidden');
   setLoading(button, true, '正在查询…');
   try {
     const payload = await apiRequest('/lookup/tasks', {
@@ -1219,7 +1235,9 @@ async function queryBatch() {
       row.append(copy);
       return row;
     }));
-    container.classList.remove('hidden');
+    $('#batch-results-count').textContent = `共 ${items.length} 条查询结果`;
+    $('#batch-view-results').classList.remove('hidden');
+    openBatchResultsModal({ returnFocus: button });
   } catch (error) {
     showToast(error.message, 'error');
   } finally {
@@ -1292,6 +1310,12 @@ function bindEvents() {
   $('#batch-keys').addEventListener('input', updateBatchControls);
   $('#batch-clear').addEventListener('click', clearBatchKeys);
   $('#batch-btn').addEventListener('click', queryBatch);
+  $('#batch-view-results').addEventListener('click', () => openBatchResultsModal());
+  $('.batch-results-modal-close').addEventListener('click', () => closeBatchResultsModal());
+  $('#close-batch-results').addEventListener('click', () => closeBatchResultsModal());
+  $('#batch-results-modal').addEventListener('click', (event) => {
+    if (event.target.id === 'batch-results-modal') closeBatchResultsModal();
+  });
 
   $('.account-modal-close').addEventListener('click', () => closeAccountConfirmModal());
   $('#cancel-account-redeem').addEventListener('click', () => closeAccountConfirmModal());
@@ -1360,6 +1384,7 @@ function bindEvents() {
     else if (!$('#subscription-modal').classList.contains('hidden')) closeSubscriptionModal();
     else if (!$('#operation-modal').classList.contains('hidden')) closeOperationModal();
     else if (!$('#quick-tool-modal').classList.contains('hidden')) closeQuickTool();
+    else if (!$('#batch-results-modal').classList.contains('hidden')) closeBatchResultsModal();
   });
 }
 
