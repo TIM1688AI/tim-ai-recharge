@@ -253,13 +253,33 @@ function showToast(message, type = 'info') {
   showToast.timer = setTimeout(() => { toast.className = 'toast'; }, 3600);
 }
 
+function setButtonLabel(button, label) {
+  const labelNode = $('span', button);
+  if (!labelNode) return;
+  labelNode.textContent = label;
+  if (button.classList.contains('is-loading')) button.dataset.loadingLabel = label;
+}
+
 function setLoading(button, loading, label) {
+  const labelNode = $('span', button);
   button.disabled = loading;
+  button.classList.toggle('is-loading', loading);
+  button.setAttribute('aria-busy', String(loading));
+
   if (loading) {
-    button.dataset.label = $('span', button)?.textContent || '';
-    if ($('span', button)) $('span', button).textContent = label;
-  } else if (button.dataset.label && $('span', button)) {
-    $('span', button).textContent = button.dataset.label;
+    button.dataset.loadingLabel = labelNode?.textContent || '';
+    if (labelNode) labelNode.textContent = label;
+    if (!$('.button-loading-dots', button)) {
+      const dots = document.createElement('span');
+      dots.className = 'button-loading-dots';
+      dots.setAttribute('aria-hidden', 'true');
+      dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+      button.append(dots);
+    }
+  } else {
+    if (labelNode && button.dataset.loadingLabel) labelNode.textContent = button.dataset.loadingLabel;
+    delete button.dataset.loadingLabel;
+    $('.button-loading-dots', button)?.remove();
   }
 }
 
@@ -563,7 +583,7 @@ function openOperationModal(operation) {
     ? `当前还可换码 ${state.refreshRemaining} 次。请在成功后立即复制并妥善保存新卡密。`
     : '只有尚未开始处理的排队任务可以取消；如果后台已经接单，接口会拒绝取消。';
   const confirmButton = $('#confirm-operation');
-  $('span', confirmButton).textContent = isRefresh ? '确认换码' : '确认取消任务';
+  setButtonLabel(confirmButton, isRefresh ? '确认换码' : '确认取消任务');
   confirmButton.classList.toggle('danger-btn', !isRefresh);
   confirmButton.classList.toggle('primary-btn', isRefresh);
   setModalVisibility($('#operation-modal'), true);
@@ -646,7 +666,8 @@ function openQuickTool(tool) {
   const submitButton = $('#submit-quick-tool');
   submitButton.classList.remove('hidden');
   submitButton.disabled = false;
-  $('span', submitButton).textContent = action;
+  submitButton.setAttribute('aria-busy', 'false');
+  setButtonLabel(submitButton, action);
   $('.quick-tool-modal').classList.remove('complete');
   setModalVisibility($('#quick-tool-modal'), true);
   (isSubscription ? $('#quick-subscription-input') : $('#quick-card-input')).focus();
@@ -725,14 +746,14 @@ async function inspectQuickCard() {
       const remaining = Math.max(0, Math.floor(Number(result.refresh_remaining ?? 0) || 0));
       if (remaining < 1) throw new Error('该卡密的换码次数已用完');
       showQuickToolResult(`卡密可以更换，当前还剩 ${remaining} 次换码机会。确认后旧码立即失效。`);
-      $('span', button).textContent = '确认换码';
+      setButtonLabel(button, '确认换码');
     } else {
       if (result.pending !== true) {
         throw new Error(result.valid === true ? '该卡密当前没有排队中的任务' : (result.error || '未找到可取消的任务'));
       }
       if (result.cancellable !== true) throw new Error('任务已经开始处理，当前无法取消');
       showQuickToolResult('任务仍在排队，可以取消。确认后任务记录会删除，卡密恢复可用。');
-      $('span', button).textContent = '确认取消任务';
+      setButtonLabel(button, '确认取消任务');
     }
     state.quickToolStage = 'confirm';
     state.quickToolCardKey = cardKey;
