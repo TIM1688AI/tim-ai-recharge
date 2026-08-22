@@ -1381,11 +1381,6 @@ async function queryBatch() {
       const badge = document.createElement('b');
       badge.className = `batch-status ${status.kind}`;
       badge.textContent = status.label;
-      head.append(key, badge);
-      row.append(head);
-      const meta = createResultMeta(item, status);
-      if (meta.childElementCount) row.append(meta);
-
       const copy = document.createElement('button');
       copy.type = 'button';
       copy.className = 'copy-key';
@@ -1400,7 +1395,13 @@ async function queryBatch() {
           showToast('复制失败，请手动复制', 'error');
         }
       });
-      row.append(copy);
+      const actions = document.createElement('div');
+      actions.className = 'batch-result-actions';
+      actions.append(badge, copy);
+      head.append(key, actions);
+      row.append(head);
+      const meta = createResultMeta(item, status);
+      if (meta.childElementCount) row.append(meta);
       return row;
     }));
     $('#batch-results-count').textContent = `共 ${items.length} 条查询结果`;
