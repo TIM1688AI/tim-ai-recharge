@@ -126,8 +126,6 @@ body.modal-open { overflow: hidden; }
 .shell-topline { min-height: 52px; padding: 0 25px; background: #faf7f1; border-bottom: 1px solid #e3ddd4; display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #6d6861; font-size: 12px; }
 .secure-badge { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; font: 400 12px/1.4 "Noto Sans SC", sans-serif; white-space: nowrap; }
 .secure-badge svg { width: 15px; }
-.announcement { margin: 18px 26px 0; padding: 11px 13px; display: flex; align-items: flex-start; gap: 9px; border-radius: 11px; color: #75543f; background: #f8eee6; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
-.announcement svg { flex: 0 0 auto; width: 17px; margin-top: 1px; color: var(--green-dark); }
 .mode-tabs { margin: 24px 26px 0; padding: 4px; border-radius: 12px; background: #eee9e1; display: grid; grid-template-columns: 1fr 1fr; }
 .mode-tab { min-height: 48px; border: 0; background: transparent; padding: 10px; border-radius: 9px; color: #59625d; font-size: 13px; cursor: pointer; }
 .mode-tab.active { background: #fffdf8; color: var(--ink); font-weight: 600; box-shadow: 0 2px 8px rgba(55,45,36,.08); }
@@ -436,7 +434,6 @@ textarea:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(207,111,
   .guide-heading-flow li + li::before { margin-inline-end: 8px; }
   .security-card { gap: 38px; padding: 38px 28px; }
   .security-copy h2 { font-size: 29px; }
-  .announcement { margin-inline: 18px; }
   .task-actions { grid-template-columns: 1fr; }
   .task-actions .restart-btn { grid-column: auto; }
   .verified-card { align-items: flex-start; gap: 12px; }

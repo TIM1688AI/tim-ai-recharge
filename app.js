@@ -446,22 +446,6 @@ function showStep(step) {
   });
 }
 
-async function loadAnnouncement(channel = state.activeChannel) {
-  const announcement = $('#announcement');
-  try {
-    const payload = await apiRequest('/announcement', { timeout: 8000, channel });
-    if (channel !== state.activeChannel) return;
-    if (payload.enabled === true && typeof payload.content === 'string' && payload.content.trim()) {
-      $('#announcement-content').textContent = payload.content.trim();
-      announcement.classList.remove('hidden');
-    } else {
-      announcement.classList.add('hidden');
-    }
-  } catch {
-    if (channel === state.activeChannel) announcement.classList.add('hidden');
-  }
-}
-
 function getQueueDisplay(value) {
   const count = Math.max(0, Math.floor(Number(value) || 0));
   return {
@@ -629,7 +613,6 @@ function applyChannelChange(channelId) {
   $('#batch-view-results').classList.add('hidden');
   state.activeChannel = channel.id;
   updateChannelInterface();
-  void loadAnnouncement(channel.id);
   startQueueUpdates();
   showToast(`已切换至${channel.label}`);
 }
@@ -1814,7 +1797,6 @@ if (typeof document !== 'undefined') {
   bindEvents();
   updateChannelInterface();
   prefillCardKeyFromUrl();
-  loadAnnouncement();
   startQueueUpdates();
 }
 
