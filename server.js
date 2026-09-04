@@ -10,8 +10,27 @@ const port = Number.isInteger(configuredPort) && configuredPort >= 0 && configur
   : 4173;
 const trustProxy = process.env.TRUST_PROXY === '1';
 const root = __dirname;
-const upstreamApiKey = String(process.env.STATION_API_KEY || '').trim();
-const upstreamBaseUrl = createUpstreamBaseUrl(process.env.CDK_API_BASE_URL || 'http://localhost:8080/api/v1');
+const maxUpstreamResponseBytes = 1024 * 1024;
+const upstreamBaseUrl = createUpstreamBaseUrl(
+  process.env.REGULAR_API_BASE_URL || process.env.CDK_API_BASE_URL || 'http://localhost:8080/api/v1',
+);
+const advancedUpstreamBaseUrl = createUpstreamBaseUrl(process.env.ADVANCED_API_BASE_URL || 'https://jzplus.org');
+const providers = Object.freeze({
+  regular: Object.freeze({
+    id: 'regular',
+    baseUrl: upstreamBaseUrl,
+    apiKey: String(process.env.REGULAR_STATION_API_KEY || process.env.STATION_API_KEY || '').trim(),
+    supportsRefresh: true,
+    supportsCancel: true,
+  }),
+  advanced: Object.freeze({
+    id: 'advanced',
+    baseUrl: advancedUpstreamBaseUrl,
+    apiKey: '',
+    supportsRefresh: false,
+    supportsCancel: false,
+  }),
+});
 const staticFiles = new Map([
   ['/', 'index.html'],
   ['/index.html', 'index.html'],
@@ -20,31 +39,59 @@ const staticFiles = new Map([
   ['/assets/tim-letter-logo-web.png', 'assets/tim-letter-logo-web.png'],
 ]);
 
-const apiRoutes = new Map([
-  ['/api-proxy/status', { method: 'GET', upstreamPath: '' }],
-  ['/api-proxy/announcement', { method: 'GET', upstreamPath: 'announcement' }],
-  ['/api-proxy/verify-cdk', { method: 'POST', upstreamPath: 'recharge/verify-cdk' }],
-  ['/api-proxy/create-task', { method: 'POST', upstreamPath: 'recharge/create-task' }],
-  ['/api-proxy/refresh-cdk', { method: 'POST', upstreamPath: 'recharge/refresh-cdk' }],
-  ['/api-proxy/cancel-task', { method: 'POST', upstreamPath: 'recharge/cancel-task' }],
-  ['/api-proxy/check-subscription', { method: 'POST', upstreamPath: 'recharge/check-subscription' }],
-  ['/api-proxy/queue-status', { method: 'GET', upstreamPath: 'recharge/queue-status' }],
-  ['/api-proxy/queue-events', { method: 'GET', upstreamPath: 'recharge/queue-events', sse: true }],
-  ['/api-proxy/lookup/tasks', { method: 'POST', upstreamPath: 'lookup/tasks' }],
+const routeDefinitions = Object.freeze([
+  ['status', { method: 'GET', upstreamPath: '' }],
+  ['announcement', { method: 'GET', upstreamPath: 'announcement' }],
+  ['verify-cdk', { method: 'POST', upstreamPath: 'recharge/verify-cdk' }],
+  ['create-task', { method: 'POST', upstreamPath: 'recharge/create-task' }],
+  ['check-subscription', { method: 'POST', upstreamPath: 'recharge/check-subscription' }],
+  ['queue-status', { method: 'GET', upstreamPath: 'recharge/queue-status' }],
+  ['queue-events', { method: 'GET', upstreamPath: 'recharge/queue-events', sse: true }],
+  ['lookup/tasks', { method: 'POST', upstreamPath: 'lookup/tasks' }],
 ]);
+const regularOnlyRouteDefinitions = Object.freeze([
+  ['refresh-cdk', { method: 'POST', upstreamPath: 'recharge/refresh-cdk' }],
+  ['cancel-task', { method: 'POST', upstreamPath: 'recharge/cancel-task' }],
+]);
+const rateLimitByRoute = Object.freeze({
+  status: { perIp: 30, global: 300, rawPerIp: 60 },
+  announcement: { perIp: 30, global: 300, rawPerIp: 60 },
+  'verify-cdk': { perIp: 60, global: 600, rawPerIp: 90 },
+  'create-task': { perIp: 20, global: 300, rawPerIp: 40 },
+  'refresh-cdk': { perIp: 12, global: 180, rawPerIp: 24 },
+  'cancel-task': { perIp: 12, global: 180, rawPerIp: 24 },
+  'check-subscription': { perIp: 20, global: 300, rawPerIp: 40 },
+  'queue-status': { perIp: 30, global: 600, rawPerIp: 60 },
+  'queue-events': { perIp: 12, global: 600, rawPerIp: 24 },
+  'lookup/tasks': { perIp: 30, global: 600, rawPerIp: 60 },
+});
 
-const rateLimitRules = new Map([
-  ['/api-proxy/status', { perIp: 30, global: 300, rawPerIp: 60 }],
-  ['/api-proxy/announcement', { perIp: 30, global: 300, rawPerIp: 60 }],
-  ['/api-proxy/verify-cdk', { perIp: 60, global: 600, rawPerIp: 90 }],
-  ['/api-proxy/create-task', { perIp: 20, global: 300, rawPerIp: 40 }],
-  ['/api-proxy/refresh-cdk', { perIp: 12, global: 180, rawPerIp: 24 }],
-  ['/api-proxy/cancel-task', { perIp: 12, global: 180, rawPerIp: 24 }],
-  ['/api-proxy/check-subscription', { perIp: 20, global: 300, rawPerIp: 40 }],
-  ['/api-proxy/queue-status', { perIp: 30, global: 600, rawPerIp: 60 }],
-  ['/api-proxy/queue-events', { perIp: 12, global: 600, rawPerIp: 24 }],
-  ['/api-proxy/lookup/tasks', { perIp: 30, global: 600, rawPerIp: 60 }],
-]);
+function buildApiRoutes() {
+  const routes = new Map();
+  const register = (channel, prefix, definitions) => {
+    definitions.forEach(([name, definition]) => {
+      routes.set(`/api-proxy${prefix}/${name}`, {
+        ...definition,
+        channel,
+        routeName: name,
+      });
+    });
+  };
+  register('regular', '/regular', [...routeDefinitions, ...regularOnlyRouteDefinitions]);
+  register('advanced', '/advanced', routeDefinitions);
+  // Preserve the original public paths for existing card links and integrations.
+  register('regular', '', [...routeDefinitions, ...regularOnlyRouteDefinitions]);
+  return routes;
+}
+
+const apiRoutes = buildApiRoutes();
+const rateLimitRules = new Map([...apiRoutes.entries()].map(([publicPath, route]) => [
+  publicPath,
+  {
+    ...rateLimitByRoute[route.routeName],
+    bucketName: `${route.channel}:${route.routeName}`,
+  },
+]));
 
 const rateLimitBuckets = new Map();
 const rateLimitWindowMs = 60 * 1000;
@@ -52,7 +99,7 @@ const sseConnectionsByIp = new Map();
 const sseConnectionLimits = { perIp: 2, global: 200 };
 let activeSseConnections = 0;
 const securityHeaders = {
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
@@ -77,7 +124,7 @@ const mime = {
 function createUpstreamBaseUrl(value) {
   const url = new URL(String(value));
   if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('CDK_API_BASE_URL 仅支持 http 或 https');
+    throw new Error('API Base URL 仅支持 http 或 https');
   }
   const configuredPath = url.pathname.replace(/\/+$/, '');
   url.pathname = `${configuredPath && configuredPath !== '/' ? configuredPath : '/api/v1'}/`;
@@ -86,10 +133,14 @@ function createUpstreamBaseUrl(value) {
   return url;
 }
 
-function buildUpstreamUrl(upstreamPath, requestUrl) {
-  const target = new URL(String(upstreamPath || '').replace(/^\/+/, ''), upstreamBaseUrl);
+function buildUpstreamUrl(upstreamPath, requestUrl, baseUrl = upstreamBaseUrl) {
+  const target = new URL(String(upstreamPath || '').replace(/^\/+/, ''), baseUrl);
   if (!upstreamPath) target.pathname = target.pathname.replace(/\/$/, '');
   return target;
+}
+
+function getProvider(channel) {
+  return providers[channel] || providers.regular;
 }
 
 function sendJson(response, statusCode, payload, extraHeaders = {}) {
@@ -107,10 +158,18 @@ function sendJson(response, statusCode, payload, extraHeaders = {}) {
 function getClientIp(request) {
   let clientIp = request.socket.remoteAddress || 'unknown';
   if (trustProxy) {
-    const forwarded = request.headers['x-forwarded-for'];
-    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-    const firstAddress = value?.split(',')[0]?.trim();
-    if (firstAddress) clientIp = firstAddress.slice(0, 64);
+    const cloudflareRay = request.headers['cf-ray'];
+    const cloudflareHeader = request.headers['cf-connecting-ip'];
+    const cloudflareAddress = Array.isArray(cloudflareHeader) ? cloudflareHeader[0] : cloudflareHeader;
+    if (cloudflareRay && cloudflareAddress?.trim()) {
+      clientIp = cloudflareAddress.trim().slice(0, 64);
+    } else {
+      const forwarded = request.headers['x-forwarded-for'];
+      const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+      const addresses = value?.split(',').map((item) => item.trim()).filter(Boolean) || [];
+      const nearestAddress = addresses.at(-1);
+      if (nearestAddress) clientIp = nearestAddress.slice(0, 64);
+    }
   }
   return clientIp;
 }
@@ -154,11 +213,15 @@ function enforceRateLimit(request, response, publicPath, { phase = 'validated' }
 
   const now = Date.now();
   const clientIp = getClientIp(request);
+  const bucketName = rule.bucketName || publicPath;
   const configuredBuckets = phase === 'raw'
-    ? [{ key: `raw-ip:${publicPath}:${clientIp}`, limit: rule.rawPerIp }]
+    ? [
+        { key: `raw-global:${bucketName}`, limit: Math.max(rule.rawPerIp, rule.global * 2) },
+        { key: `raw-ip:${bucketName}:${clientIp}`, limit: rule.rawPerIp },
+      ]
     : [
-        { key: `global:${publicPath}`, limit: rule.global },
-        { key: `ip:${publicPath}:${clientIp}`, limit: rule.perIp },
+        { key: `global:${bucketName}`, limit: rule.global },
+        { key: `ip:${bucketName}:${clientIp}`, limit: rule.perIp },
       ];
   const buckets = configuredBuckets.map((entry) => ({
     ...entry,
@@ -197,7 +260,11 @@ function parseSessionJson(value) {
   }
 }
 
-function validateProxyPayload(upstreamPath, payload) {
+function validateProxyPayload(routeOrPath, payload) {
+  const route = typeof routeOrPath === 'string'
+    ? { upstreamPath: routeOrPath, channel: 'regular' }
+    : routeOrPath;
+  const upstreamPath = route?.upstreamPath;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '请求体必须是 JSON 对象';
 
   if (['recharge/verify-cdk', 'recharge/refresh-cdk', 'recharge/cancel-task'].includes(upstreamPath)) {
@@ -226,25 +293,39 @@ function validateProxyPayload(upstreamPath, payload) {
     if (!Array.isArray(payload.codes) || payload.codes.length < 1 || payload.codes.length > 100) {
       return 'codes 数量必须为 1–100 个';
     }
-    return payload.codes.every((item) => typeof item === 'string' && item.trim() && item.length <= 512)
+    return payload.codes.every(isCdkCode)
       ? null
       : 'codes 中存在格式或长度错误的卡密';
   }
   return '不支持的代理接口';
 }
 
-function forwardUpstream(request, response, route, body) {
-  const target = buildUpstreamUrl(route.upstreamPath, request.url);
-  const transport = target.protocol === 'https:' ? https : http;
+function buildUpstreamPayload(route, payload) {
+  if (route.channel === 'advanced' && route.upstreamPath === 'recharge/check-subscription') {
+    return { session: payload.token_input };
+  }
+  return payload;
+}
+
+function buildUpstreamHeaders(route, body) {
+  const provider = getProvider(route.channel);
   const headers = {
     Accept: route.sse ? 'text/event-stream' : 'application/json',
-    'User-Agent': 'Tim-AI-Recharge/2.0',
+    'User-Agent': 'Tim-AI-Recharge/2.1',
   };
   if (route.method === 'POST') {
     headers['Content-Type'] = 'application/json';
     headers['Content-Length'] = body.length;
   }
-  if (upstreamApiKey) headers['X-API-Key'] = upstreamApiKey;
+  if (provider.apiKey) headers['X-API-Key'] = provider.apiKey;
+  return headers;
+}
+
+function forwardUpstream(request, response, route, body) {
+  const provider = getProvider(route.channel);
+  const target = buildUpstreamUrl(route.upstreamPath, request.url, provider.baseUrl);
+  const transport = target.protocol === 'https:' ? https : http;
+  const headers = buildUpstreamHeaders(route, body);
 
   const upstream = transport.request(target, {
     method: route.method,
@@ -263,8 +344,47 @@ function forwardUpstream(request, response, route, body) {
     if (upstreamResponse.headers['retry-after']) {
       responseHeaders['Retry-After'] = upstreamResponse.headers['retry-after'];
     }
-    response.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
-    upstreamResponse.pipe(response);
+    if (route.sse) {
+      response.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
+      upstreamResponse.pipe(response);
+      return;
+    }
+
+    const declaredLength = Number(upstreamResponse.headers['content-length']);
+    if (Number.isFinite(declaredLength) && declaredLength > maxUpstreamResponseBytes) {
+      upstreamResponse.destroy();
+      sendJson(response, 502, { code: 'upstream_response_too_large', error: '充值服务返回内容异常，请稍后重试' });
+      return;
+    }
+
+    const chunks = [];
+    let size = 0;
+    let exceeded = false;
+    upstreamResponse.on('data', (chunk) => {
+      if (exceeded) return;
+      size += chunk.length;
+      if (size > maxUpstreamResponseBytes) {
+        exceeded = true;
+        upstreamResponse.destroy();
+        if (!response.headersSent && !response.destroyed) {
+          sendJson(response, 502, { code: 'upstream_response_too_large', error: '充值服务返回内容异常，请稍后重试' });
+        }
+        return;
+      }
+      chunks.push(chunk);
+    });
+    upstreamResponse.on('end', () => {
+      if (exceeded || response.writableEnded || response.destroyed) return;
+      const responseBody = Buffer.concat(chunks);
+      responseHeaders['Content-Length'] = responseBody.length;
+      response.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
+      response.end(responseBody);
+    });
+    upstreamResponse.on('error', () => {
+      if (!response.headersSent && !response.destroyed) {
+        sendJson(response, 502, { code: 'upstream_invalid_response', error: '充值服务返回异常，请稍后重试' });
+      }
+    });
   });
   response.on('close', () => {
     if (!response.writableEnded) upstream.destroy(new Error('Client disconnected'));
@@ -324,18 +444,18 @@ function proxyApi(request, response, route, publicPath) {
       sendJson(response, 400, { code: 'invalid_json', error: '请求体不是有效的 JSON' });
       return;
     }
-    const validationError = validateProxyPayload(route.upstreamPath, payload);
+    const validationError = validateProxyPayload(route, payload);
     if (validationError) {
       sendJson(response, 400, { code: 'invalid_request', error: validationError });
       return;
     }
     if (!enforceRateLimit(request, response, publicPath)) return;
-    forwardUpstream(request, response, route, Buffer.from(JSON.stringify(payload)));
+    forwardUpstream(request, response, route, Buffer.from(JSON.stringify(buildUpstreamPayload(route, payload))));
   });
 }
 
 function createServer() {
-  return http.createServer((request, response) => {
+  const server = http.createServer((request, response) => {
     let pathname;
     try {
       pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -385,19 +505,37 @@ function createServer() {
       else fs.createReadStream(filePath).pipe(response);
     });
   });
+  server.headersTimeout = 15000;
+  server.requestTimeout = 30000;
+  server.keepAliveTimeout = 5000;
+  server.maxHeadersCount = 100;
+  server.maxRequestsPerSocket = 100;
+  return server;
 }
 
 function validateProductionConfig(env = process.env) {
   const isProduction = env.NODE_ENV === 'production' || env.RENDER === 'true';
   if (!isProduction) return;
   const missing = [];
-  if (!String(env.CDK_API_BASE_URL || '').trim()) missing.push('CDK_API_BASE_URL');
-  if (!String(env.STATION_API_KEY || '').trim() && env.ALLOW_EMPTY_STATION_API_KEY !== '1') {
-    missing.push('STATION_API_KEY');
+  if (!String(env.REGULAR_API_BASE_URL || env.CDK_API_BASE_URL || '').trim()) {
+    missing.push('REGULAR_API_BASE_URL（或 CDK_API_BASE_URL）');
+  }
+  if (!String(env.REGULAR_STATION_API_KEY || env.STATION_API_KEY || '').trim() && env.ALLOW_EMPTY_STATION_API_KEY !== '1') {
+    missing.push('REGULAR_STATION_API_KEY（或 STATION_API_KEY）');
   }
   if (missing.length) {
     throw new Error(`生产环境缺少必要配置：${missing.join(', ')}`);
   }
+  const upstreams = [
+    ['常规充值', env.REGULAR_API_BASE_URL || env.CDK_API_BASE_URL],
+    ['进阶充值', env.ADVANCED_API_BASE_URL || 'https://jzplus.org'],
+  ];
+  upstreams.forEach(([label, value]) => {
+    const url = createUpstreamBaseUrl(value);
+    if (url.protocol !== 'https:') {
+      throw new Error(`生产环境的${label} API Base URL 必须使用 HTTPS`);
+    }
+  });
 }
 
 const cleanupTimer = setInterval(() => {
@@ -420,17 +558,24 @@ if (require.main === module) {
   server.listen(port, host, () => {
     const localHost = host === '0.0.0.0' ? '127.0.0.1' : host;
     console.log(`Tim AI: http://${localHost}:${port}/`);
-    if (!process.env.CDK_API_BASE_URL) {
+    if (!process.env.CDK_API_BASE_URL && !process.env.REGULAR_API_BASE_URL) {
       console.log('Tim AI: 当前使用本地 API 默认地址 http://localhost:8080/api/v1');
+    }
+    if (!process.env.ADVANCED_API_BASE_URL) {
+      console.log('Tim AI: 进阶充值默认连接 https://jzplus.org/api/v1');
     }
   });
 }
 
 module.exports = {
+  buildApiRoutes,
+  buildUpstreamHeaders,
+  buildUpstreamPayload,
   buildUpstreamUrl,
   createUpstreamBaseUrl,
   createServer,
   enforceRateLimit,
+  getProvider,
   isCdkCode,
   resetRateLimits: () => rateLimitBuckets.clear(),
   validateProductionConfig,

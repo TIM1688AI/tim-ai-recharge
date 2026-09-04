@@ -3,6 +3,7 @@
 基于 `cdk-recharge-system` 公开 API 的零依赖 Node.js 充值站，包含：
 
 - CDK 校验与充值任务提交
+- 常规充值与进阶充值双通道选择，任务记录与队列状态彼此隔离
 - 提交前查询 ChatGPT 当前订阅状态
 - 已有会员风险提示与充值账号二次确认
 - 卡密换码、唯一新码展示与一键复制
@@ -52,14 +53,17 @@ http://localhost:8080/api/v1
 
 ## 新 API 配置
 
-所有供应商请求都通过同源 Node 代理发送，网页端不会接触 API Key。
+所有供应商请求都通过同源 Node 代理发送，网页端不会直接连接供应商，也不会接触 API Key。常规充值保留原有的 API Key；进阶充值固定使用无 Key 的 `https://jzplus.org`。
 
 必须在服务器环境变量中配置：
 
 | 变量 | 必填 | 说明 |
 |---|---:|---|
-| `CDK_API_BASE_URL` | 生产必填 | 供应商 API 地址；可填写域名根地址或完整 `/api/v1` 地址 |
-| `STATION_API_KEY` | 视供应商配置 | 对外 API Key；强制鉴权开启时必填 |
+| `REGULAR_API_BASE_URL` | 建议配置 | 常规充值 API 地址；可填写域名根地址或完整 `/api/v1` 地址 |
+| `REGULAR_STATION_API_KEY` | 建议配置 | 常规充值的对外 API Key |
+| `CDK_API_BASE_URL` | 兼容旧配置 | 未配置 `REGULAR_API_BASE_URL` 时作为常规充值地址 |
+| `STATION_API_KEY` | 兼容旧配置 | 未配置 `REGULAR_STATION_API_KEY` 时作为常规充值 Key |
+| `ADVANCED_API_BASE_URL` | 否 | 进阶充值 API 地址，默认 `https://jzplus.org`，不设置 API Key |
 | `NODE_ENV=production` | 生产必填 | 启用生产配置完整性检查 |
 | `PORT` | 否 | 监听端口，默认 `4173` |
 | `HOST` | 否 | 监听地址，默认 `0.0.0.0` |
@@ -68,33 +72,27 @@ http://localhost:8080/api/v1
 PowerShell 本地联调示例：
 
 ```powershell
-$env:CDK_API_BASE_URL="https://apiai.jzplus.org"
-$env:STATION_API_KEY="你的API密钥"
+$env:REGULAR_API_BASE_URL="https://apiai.jzplus.org"
+$env:REGULAR_STATION_API_KEY="你的API密钥"
+$env:ADVANCED_API_BASE_URL="https://jzplus.org"
 npm start
 ```
 
-当前供应商 Base URL 为 `https://apiai.jzplus.org`。服务端会把仅含域名的配置自动规范化为 `https://apiai.jzplus.org/api/v1/`，也接受已经包含 `/api/v1` 的写法。
+常规充值当前供应商 Base URL 为 `https://apiai.jzplus.org`；进阶充值默认 Base URL 为 `https://jzplus.org`，无需 API Key。服务端会把仅含域名的配置自动规范化为对应的 `/api/v1/`，也接受已经包含 `/api/v1` 的写法。
 
 不要把 `STATION_API_KEY` 写入 `app.js`、提交到 GitHub，或配置成浏览器可见的前端变量。
 
-生产环境启用 `NODE_ENV=production` 或运行在 Render 时，如果缺少 `CDK_API_BASE_URL`、`STATION_API_KEY`，服务会拒绝启动。供应商明确关闭 API Key 鉴权时，才可设置 `ALLOW_EMPTY_STATION_API_KEY=1`。
+生产环境启用 `NODE_ENV=production` 或运行在 Render 时，如果缺少常规充值的 `REGULAR_API_BASE_URL`（或旧变量 `CDK_API_BASE_URL`）和 API Key，服务会拒绝启动；两条通道的 Base URL 也必须使用 HTTPS。本地开发仍可使用 `http://localhost`。不要为了进阶充值设置 `ALLOW_EMPTY_STATION_API_KEY=1`；该开关只与常规充值的旧兼容配置有关。
 
 ## 代理白名单
 
-本地服务只放行以下公开接口：
+本地服务仅放行以下公开接口，并按通道分开转发：
 
-- `GET /api/v1`
-- `GET /api/v1/announcement`
-- `POST /api/v1/recharge/verify-cdk`
-- `POST /api/v1/recharge/create-task`
-- `POST /api/v1/recharge/refresh-cdk`
-- `POST /api/v1/recharge/cancel-task`
-- `POST /api/v1/recharge/check-subscription`
-- `GET /api/v1/recharge/queue-status`
-- `GET /api/v1/recharge/queue-events`
-- `POST /api/v1/lookup/tasks`
+- `/api-proxy/regular/*`：全部原有公开接口，包括换码与取消任务。
+- `/api-proxy/advanced/*`：状态、公告、卡密验证、任务提交、订阅查询、队列和记录查询。
+- 进阶充值不暴露换码或取消任务路由，因为该供应商文档未提供对应接口。
 
-管理端和其他内部接口不会被代理。代理还会校验请求结构、限制请求体大小，并执行客户端和全局限流。
+管理端和其他内部接口不会被代理。代理还会校验请求结构、限制请求体大小、限制上游响应体积，并执行客户端和全局限流。兼容旧地址与新通道地址共用同一组限流桶，不能通过切换 URL 重复消耗供应商接口。
 
 网站的单任务进度查询也通过 `POST /lookup/tasks` 完成，避免把卡密放进查询 URL。SSE 实时队列连接还设有单 IP 和全局并发上限，超过上限时浏览器会自动降级为轮询。
 
@@ -108,14 +106,16 @@ npm start
 
 如果网站使用 Cloudflare CDN 代理到 Node 主机，应：
 
-1. 在 Node 托管平台配置 `CDK_API_BASE_URL` 和 `STATION_API_KEY`。
+1. 在 Node 托管平台配置常规充值的 `REGULAR_API_BASE_URL`、`REGULAR_STATION_API_KEY`，并按需配置 `ADVANCED_API_BASE_URL`；进阶充值无需 Key。
 2. 仅允许公网通过 Cloudflare 或可信反向代理访问应用。
-3. 设置 `TRUST_PROXY=1`，使限流使用真实客户端 IP。
+3. 设置 `TRUST_PROXY=1`，使限流优先使用 Cloudflare 的客户端 IP；没有 Cloudflare 标记时仅使用最靠近应用的转发地址，避免直接信任可伪造的首个 `X-Forwarded-For`。
 4. 使用 HTTPS，不直接暴露 Node 端口。
 5. 在 Cloudflare 开启 Always Use HTTPS、HSTS 和基础限流/WAF 规则。
 6. 确认 Render 原始域名不作为公开访问入口；如果无法关闭，应避免依赖可伪造的转发头作为唯一安全边界。
 
-仓库包含 `render.yaml`，可用于 Render Blueprint 或作为现有服务配置基准。`CDK_API_BASE_URL` 和 `STATION_API_KEY` 使用 `sync: false`，实际值仍需在 Render Dashboard 手动填写。健康检查路径为 `/healthz`。
+Node 内置限流用于最后一道保护，只在当前进程内生效，重启后会清空，多实例之间也不会共享。生产环境必须同时在 Cloudflare 对验证卡密、创建任务、订阅查询与充值记录查询设置集中限流。
+
+仓库包含 `render.yaml`，可用于 Render Blueprint 或作为现有服务配置基准。常规充值的 Base URL 和 Key 必须在 Render Dashboard 手动填写；进阶充值默认使用 `https://jzplus.org`。健康检查路径为 `/healthz`。
 
 如果当前部署是纯 Cloudflare Pages 静态托管，`server.js` 不会运行，需要先把 `/api-proxy/*` 迁移为 Cloudflare Worker 或 Pages Functions，不能把 API Key 放回前端。
 

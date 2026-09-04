@@ -4,6 +4,9 @@ const http = require('http');
 const test = require('node:test');
 
 const {
+  buildApiRoutes,
+  buildUpstreamHeaders,
+  buildUpstreamPayload,
   buildUpstreamUrl,
   createUpstreamBaseUrl,
   createServer,
@@ -72,6 +75,18 @@ test('new provider payload validation accepts documented requests', () => {
   assert.equal(validateProxyPayload('recharge/refresh-cdk', { cdk_code: TEST_CDK }), null);
   assert.equal(validateProxyPayload('recharge/cancel-task', { cdk_code: TEST_CDK }), null);
   assert.equal(validateProxyPayload('lookup/tasks', { codes: [TEST_CDK, SECOND_CDK] }), null);
+  assert.equal(validateProxyPayload({ channel: 'advanced', upstreamPath: 'recharge/check-subscription' }, { token_input: SESSION }), null);
+});
+
+test('advanced channel keeps its own public routes, omits API key, and maps subscription payloads', () => {
+  const routes = buildApiRoutes();
+  assert.equal(routes.get('/api-proxy/regular/verify-cdk').channel, 'regular');
+  assert.equal(routes.get('/api-proxy/advanced/verify-cdk').channel, 'advanced');
+  assert.equal(routes.has('/api-proxy/advanced/refresh-cdk'), false);
+  assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'recharge/check-subscription' }, { token_input: SESSION }), { session: SESSION });
+  const advancedHeaders = buildUpstreamHeaders({ channel: 'advanced', method: 'POST' }, Buffer.from('{}'));
+  assert.equal(advancedHeaders['X-API-Key'], undefined);
+  assert.equal(advancedHeaders['Content-Type'], 'application/json');
 });
 
 test('card keys preserve supplier formatting and only receive boundary validation', () => {
@@ -157,7 +172,7 @@ test('upstream URL construction keeps the API base path and safe query', () => {
 
 test('production startup requires upstream URL and server-side API key', () => {
   assert.doesNotThrow(() => validateProductionConfig({ NODE_ENV: 'development' }));
-  assert.throws(() => validateProductionConfig({ NODE_ENV: 'production' }), /CDK_API_BASE_URL.*STATION_API_KEY/);
+  assert.throws(() => validateProductionConfig({ NODE_ENV: 'production' }), /REGULAR_API_BASE_URL.*STATION_API_KEY/);
   assert.doesNotThrow(() => validateProductionConfig({
     NODE_ENV: 'production',
     CDK_API_BASE_URL: 'https://apiai.jzplus.org',
@@ -168,6 +183,17 @@ test('production startup requires upstream URL and server-side API key', () => {
     CDK_API_BASE_URL: 'https://apiai.jzplus.org',
     ALLOW_EMPTY_STATION_API_KEY: '1',
   }));
+  assert.throws(() => validateProductionConfig({
+    NODE_ENV: 'production',
+    CDK_API_BASE_URL: 'http://apiai.jzplus.org',
+    STATION_API_KEY: 'test-key',
+  }), /常规充值.*HTTPS/);
+  assert.throws(() => validateProductionConfig({
+    NODE_ENV: 'production',
+    CDK_API_BASE_URL: 'https://apiai.jzplus.org',
+    STATION_API_KEY: 'test-key',
+    ADVANCED_API_BASE_URL: 'http://jzplus.org',
+  }), /进阶充值.*HTTPS/);
 });
 
 test('production process exits before listening when required secrets are missing', () => {
@@ -200,11 +226,17 @@ test('proxy rejects malformed input before upstream forwarding', () => {
   assert.match(validateProxyPayload('recharge/cancel-task', { cdk_code: 'abc' }), /cdk_code/);
   assert.match(validateProxyPayload('recharge/check-subscription', { token_input: '' }), /token_input/);
   assert.match(validateProxyPayload('lookup/tasks', { codes: [] }), /1–100/);
+  assert.match(validateProxyPayload('lookup/tasks', { codes: ['A'.repeat(129)] }), /格式或长度/);
+  assert.match(validateProxyPayload('lookup/tasks', { codes: ['ABCD\nEFGH'] }), /格式或长度/);
 });
 
 test('HTTP boundary enforces methods, content type, static allowlist, and rate limits', async (t) => {
   resetRateLimits();
   const server = createServer();
+  assert.equal(server.headersTimeout, 15000);
+  assert.equal(server.requestTimeout, 30000);
+  assert.equal(server.maxHeadersCount, 100);
+  assert.equal(server.maxRequestsPerSocket, 100);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
 
@@ -212,6 +244,8 @@ test('HTTP boundary enforces methods, content type, static allowlist, and rate l
   assert.equal(wrongMethod.status, 405);
   assert.equal(wrongMethod.headers.allow, 'POST');
   assert.match(wrongMethod.headers['content-security-policy'], /connect-src 'self'/);
+  assert.match(wrongMethod.headers['content-security-policy'], /object-src 'none'/);
+  assert.match(wrongMethod.headers['content-security-policy'], /frame-src 'none'/);
   assert.doesNotMatch(wrongMethod.headers['content-security-policy'], /jzai16888/);
 
   const announcementWrongMethod = await request(server, {
@@ -247,6 +281,9 @@ test('HTTP boundary enforces methods, content type, static allowlist, and rate l
   const deprecatedLookup = await request(server, { path: '/api-proxy/lookup/task?cdk_code=abc' });
   assert.equal(deprecatedLookup.status, 404);
 
+  const unavailableAdvancedAction = await request(server, { path: '/api-proxy/advanced/refresh-cdk' });
+  assert.equal(unavailableAdvancedAction.status, 404);
+
   const health = await request(server, { path: '/healthz' });
   assert.equal(health.status, 200);
   assert.deepEqual(JSON.parse(health.body), { status: 'ok' });
@@ -273,7 +310,7 @@ test('HTTP boundary enforces methods, content type, static allowlist, and rate l
   resetRateLimits();
   for (let index = 0; index < 40; index += 1) {
     const malformed = await request(server, {
-      path: '/api-proxy/create-task',
+      path: index % 2 === 0 ? '/api-proxy/create-task' : '/api-proxy/regular/create-task',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{',

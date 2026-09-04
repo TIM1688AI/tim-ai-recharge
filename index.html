@@ -12,26 +12,28 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260822-41" />
+    <link rel="stylesheet" href="./styles.css?v=20260904-44" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
     <div class="ambient ambient-two"></div>
 
     <header class="site-header">
-      <nav class="top-nav" aria-label="主导航">
+      <div class="top-nav">
         <span class="nav-logo-frame" aria-hidden="true">
           <span class="nav-logo"></span>
         </span>
-        <a class="active" href="#recharge">自助充值</a>
-        <a href="#guide">使用指南</a>
-      </nav>
-      <span class="header-note"><i></i> 服务在线</span>
+      </div>
+      <span class="header-note"><i></i> 自助服务</span>
     </header>
 
     <main>
       <section class="hero" id="recharge">
         <div class="hero-copy">
+          <div class="channel-switcher" role="group" aria-label="选择充值通道">
+            <button class="channel-choice active" id="regular-channel" type="button" data-channel="regular" aria-pressed="true">常规充值</button>
+            <button class="channel-choice" id="advanced-channel" type="button" data-channel="advanced" aria-pressed="false">进阶充值</button>
+          </div>
           <div class="hero-trust-stage">
             <p class="hero-handwritten" id="hero-handwritten" aria-label="Hello, Welcome to the Age of AI. Signed Tim.">
               <span class="hero-handwritten-copy" lang="en" data-text="Hello, Welcome to the Age of AI">Hello, Welcome to the Age of AI</span>
@@ -117,7 +119,7 @@
                   <input id="card-key" name="cardKey" maxlength="128" autocomplete="off" spellcheck="false" placeholder="请输入供应商提供的充值卡密" />
                   <button type="button" class="paste-btn" id="paste-key">粘贴</button>
                 </div>
-                <p class="field-note">支持供应商签发的不同卡密格式，最终状态以接口验证结果为准。</p>
+                <p class="field-note" id="card-key-note" aria-live="polite">常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。</p>
                 <button class="primary-btn" id="verify-btn" type="button"><span>验证卡密</span><b>→</b></button>
               </div>
 
@@ -215,10 +217,11 @@
 
           <section class="tab-panel" id="batch-panel" role="tabpanel" aria-labelledby="batch-tab">
             <div class="batch-head">
-              <div><h2>批量查询充值记录</h2><p id="batch-limit-note">查询已提交任务；未提交的有效卡密会显示“暂无提交记录”</p></div>
+              <div><h2 id="batch-title">批量查询充值记录</h2><p id="batch-limit-note">查询当前通道已提交任务；未提交的有效卡密会显示“暂无提交记录”</p></div>
               <span id="key-count">0 / 100</span>
             </div>
-            <textarea id="batch-keys" aria-describedby="batch-limit-note" placeholder="每行输入一个卡密，最多 100 个" spellcheck="false"></textarea>
+            <label class="sr-only" for="batch-keys">需要查询的充值卡密</label>
+            <textarea id="batch-keys" aria-describedby="batch-limit-note" autocomplete="off" placeholder="每行输入一个卡密，最多 100 个" spellcheck="false"></textarea>
             <div class="batch-button-row">
               <button class="primary-btn" id="batch-btn" type="button"><span>查询充值记录</span><b>→</b></button>
               <button class="secondary-btn batch-clear-btn" id="batch-clear" type="button" disabled><span>清空卡密查询</span><b aria-hidden="true">↺</b></button>
@@ -269,12 +272,25 @@
       </div>
     </div>
 
+    <div class="modal-backdrop hidden" id="channel-switch-modal" role="dialog" aria-modal="true" aria-labelledby="channel-switch-title">
+      <div class="modal channel-switch-modal">
+        <button class="modal-close channel-switch-modal-close" type="button" aria-label="关闭">×</button>
+        <div class="modal-icon account-modal-icon" aria-hidden="true">⇄</div>
+        <h2 id="channel-switch-title">切换充值通道？</h2>
+        <p id="channel-switch-copy">切换后将清除当前填写的卡密与 Session，请确认后继续。</p>
+        <div class="modal-actions">
+          <button class="secondary-btn" id="cancel-channel-switch" type="button">留在当前通道</button>
+          <button class="primary-btn" id="confirm-channel-switch" type="button"><span>确认切换</span><b>→</b></button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-backdrop hidden" id="subscription-modal" role="dialog" aria-modal="true" aria-labelledby="subscription-title">
       <div class="modal subscription-modal">
         <button class="modal-close subscription-modal-close" type="button" aria-label="关闭">×</button>
-        <div class="modal-icon">!</div>
+        <div class="modal-icon" aria-hidden="true">!</div>
         <h2 id="subscription-title">当前账号已有会员</h2>
-        <p>嗨，后台处理充值时，查询到你的账号当前已有以下订阅，已有会员的账号无法重复充值，请会员到期后再提交充值！</p>
+        <p id="subscription-copy">嗨，后台处理充值时，查询到你的账号当前已有以下订阅，已有会员的账号无法重复充值，请会员到期后再提交充值！</p>
         <dl class="subscription-details">
           <div><dt>账号</dt><dd id="subscription-account">—</dd></div>
           <div><dt>当前套餐</dt><dd id="subscription-plan">—</dd></div>
@@ -282,7 +298,7 @@
         </dl>
         <div class="modal-actions">
           <button class="secondary-btn" id="close-subscription" type="button">返回检查账号</button>
-          <button class="primary-btn" id="continue-subscription" type="button"><span>仍要继续</span><b>→</b></button>
+          <button class="primary-btn hidden" id="continue-subscription" type="button"><span>继续进阶充值</span><b>→</b></button>
         </div>
       </div>
     </div>
@@ -353,6 +369,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260822-22" defer></script>
+    <script src="./app.js?v=20260904-26" defer></script>
   </body>
 </html>

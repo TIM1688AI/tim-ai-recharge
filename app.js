@@ -5,9 +5,14 @@ const CONFIG = {
   requestTimeout: 25000,
   taskPollInterval: 5000,
   queuePollInterval: 15000,
+  channels: Object.freeze({
+    regular: Object.freeze({ id: 'regular', label: '常规充值', supportsRefresh: true, supportsCancel: true, allowsActiveSubscription: false, cardNote: '常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。', recordsNote: '查询常规充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
+    advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, allowsActiveSubscription: true, cardNote: '进阶充值：已有 Plus / Pro 账号可继续提交，Team 账号暂不支持。', recordsNote: '查询进阶充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
+  }),
 };
 
 const state = {
+  activeChannel: 'regular',
   verifiedCardKey: '',
   verifiedPlan: '',
   refreshRemaining: 0,
@@ -27,10 +32,25 @@ const state = {
   quickToolStage: 'input',
   quickToolCardKey: '',
   batchModalReturnFocus: null,
+  channelSwitchReturnFocus: null,
+  pendingChannel: '',
+  subscriptionCanContinue: false,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+function getChannel(channelId = state.activeChannel) {
+  return CONFIG.channels[channelId] || CONFIG.channels.regular;
+}
+
+function isAdvancedChannel(channelId = state.activeChannel) {
+  return getChannel(channelId).id === 'advanced';
+}
+
+function channelApiPath(path, channelId = state.activeChannel) {
+  return `/${getChannel(channelId).id}${path}`;
+}
 
 function configureBrand() {
   $$('[data-brand]').forEach((element) => { element.textContent = CONFIG.brandName; });
@@ -65,6 +85,28 @@ function startHandwrittenIntro() {
   }, { once: true });
 }
 
+function startHandwrittenAmbientMotion() {
+  const note = $('#hero-handwritten');
+  if (!note) return;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let inViewport = true;
+
+  const sync = () => {
+    note.classList.toggle('is-ambient-active', !reducedMotion.matches && !document.hidden && inViewport);
+  };
+
+  document.addEventListener('visibilitychange', sync);
+  reducedMotion.addEventListener?.('change', sync);
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver(([entry]) => {
+      inViewport = entry.isIntersecting;
+      sync();
+    }, { threshold: 0.05 });
+    observer.observe(note);
+  }
+  sync();
+}
+
 function startHeroSubtitleRotation() {
   const rotator = $('#hero-subtitle-rotator');
   const items = rotator ? $$('.hero-subtitle', rotator) : [];
@@ -86,7 +128,9 @@ function startHeroSubtitleRotation() {
     && !pointerPaused;
   const schedule = () => {
     stop();
-    if (canRotate()) timer = setTimeout(advance, 3000);
+    const active = canRotate();
+    rotator.classList.toggle('is-ambient-active', active);
+    if (active) timer = setTimeout(advance, 3000);
   };
   function advance() {
     if (!canRotate()) {
@@ -283,11 +327,11 @@ function setLoading(button, loading, label) {
   }
 }
 
-async function apiRequest(path, { method = 'GET', body, timeout = CONFIG.requestTimeout } = {}) {
+async function apiRequest(path, { method = 'GET', body, timeout = CONFIG.requestTimeout, channel = state.activeChannel } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await fetch(`${CONFIG.proxyBase}${path}`, {
+    const response = await fetch(`${CONFIG.proxyBase}${channelApiPath(path, channel)}`, {
       method,
       headers: {
         Accept: 'application/json',
@@ -402,10 +446,11 @@ function showStep(step) {
   });
 }
 
-async function loadAnnouncement() {
+async function loadAnnouncement(channel = state.activeChannel) {
   const announcement = $('#announcement');
   try {
-    const payload = await apiRequest('/announcement', { timeout: 8000 });
+    const payload = await apiRequest('/announcement', { timeout: 8000, channel });
+    if (channel !== state.activeChannel) return;
     if (payload.enabled === true && typeof payload.content === 'string' && payload.content.trim()) {
       $('#announcement-content').textContent = payload.content.trim();
       announcement.classList.remove('hidden');
@@ -413,7 +458,7 @@ async function loadAnnouncement() {
       announcement.classList.add('hidden');
     }
   } catch {
-    announcement.classList.add('hidden');
+    if (channel === state.activeChannel) announcement.classList.add('hidden');
   }
 }
 
@@ -455,13 +500,14 @@ function renderQueueError() {
   setQueueMessage(queue.message, { state: 'error', retry: true });
 }
 
-async function loadQueueStatus() {
+async function loadQueueStatus(channel = state.activeChannel) {
   try {
-    const payload = await apiRequest('/queue-status', { timeout: 8000 });
+    const payload = await apiRequest('/queue-status', { timeout: 8000, channel });
+    if (channel !== state.activeChannel) return false;
     renderQueueStatus(payload, '自动刷新');
     return true;
   } catch {
-    renderQueueError();
+    if (channel === state.activeChannel) renderQueueError();
     return false;
   }
 }
@@ -476,33 +522,41 @@ function stopQueuePolling() {
   state.queuePollTimer = null;
 }
 
-function startQueuePolling({ reconnecting = false } = {}) {
+function stopQueueUpdates() {
+  clearTimeout(state.queueReconnectTimer);
+  state.queueReconnectTimer = null;
+  stopQueuePolling();
+  state.queueEventSource?.close();
+  state.queueEventSource = null;
+}
+
+function startQueuePolling({ reconnecting = false, channel = state.activeChannel } = {}) {
   if (state.queuePollTimer) return;
   setQueueMessage(reconnecting ? '连接断开，正在重新连接…' : '正在获取队列状态…', { state: 'loading' });
-  loadQueueStatus();
+  loadQueueStatus(channel);
   state.queuePollTimer = setInterval(() => {
-    if (document.visibilityState === 'visible') loadQueueStatus();
+    if (document.visibilityState === 'visible' && channel === state.activeChannel) loadQueueStatus(channel);
   }, CONFIG.queuePollInterval);
 }
 
 function startQueueUpdates() {
-  clearTimeout(state.queueReconnectTimer);
-  state.queueReconnectTimer = null;
-  if (state.queueEventSource) state.queueEventSource.close();
+  const channel = state.activeChannel;
+  stopQueueUpdates();
   setQueueMessage('正在获取队列状态…', { state: 'loading' });
-  loadQueueStatus();
+  loadQueueStatus(channel);
   if (typeof EventSource === 'undefined') {
-    startQueuePolling();
+    startQueuePolling({ channel });
     return;
   }
 
-  const source = new EventSource(`${CONFIG.proxyBase}/queue-events`);
+  const source = new EventSource(`${CONFIG.proxyBase}${channelApiPath('/queue-events', channel)}`);
   state.queueEventSource = source;
   source.addEventListener('open', () => {
-    stopQueuePolling();
+    if (channel === state.activeChannel) stopQueuePolling();
   });
   source.addEventListener('queue_status', (event) => {
     try {
+      if (channel !== state.activeChannel) return;
       renderQueueStatus(JSON.parse(event.data), '实时推送');
       stopQueuePolling();
     } catch {
@@ -512,9 +566,95 @@ function startQueueUpdates() {
   source.addEventListener('error', () => {
     source.close();
     if (state.queueEventSource === source) state.queueEventSource = null;
-    startQueuePolling({ reconnecting: true });
-    state.queueReconnectTimer = setTimeout(startQueueUpdates, 30000);
+    if (channel !== state.activeChannel) return;
+    startQueuePolling({ reconnecting: true, channel });
+    state.queueReconnectTimer = setTimeout(() => {
+      if (channel === state.activeChannel) startQueueUpdates();
+    }, 30000);
   });
+}
+
+function updateChannelInterface() {
+  const channel = getChannel();
+  document.body.dataset.rechargeChannel = channel.id;
+  $$('.channel-choice').forEach((button) => {
+    const selected = button.dataset.channel === channel.id;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  $('#card-key-note').textContent = channel.cardNote;
+  $('#batch-limit-note').textContent = channel.recordsNote;
+  $('#quick-refresh-cdk').classList.toggle('hidden', !channel.supportsRefresh);
+  $('#quick-cancel-task').classList.toggle('hidden', !channel.supportsCancel);
+  $('#refresh-cdk-btn').classList.toggle('hidden', !channel.supportsRefresh || state.refreshRemaining < 1);
+  $('#continue-subscription').classList.add('hidden');
+}
+
+function hasRechargeDraft() {
+  return Boolean(
+    state.verifiedCardKey
+    || state.pendingRedeemSession
+    || normalizeKey($('#card-key').value)
+    || String($('#session-json').value || '').trim(),
+  );
+}
+
+function hasProcessingTask() {
+  return Boolean(state.activeTask && !getTaskStatus(state.activeTask.latestTask).terminal);
+}
+
+function hasPendingRequest() {
+  return $$('.is-loading').length > 0;
+}
+
+function closeChannelSwitchModal({ restoreFocus = true } = {}) {
+  setModalVisibility($('#channel-switch-modal'), false);
+  if (restoreFocus && state.channelSwitchReturnFocus instanceof HTMLElement) {
+    state.channelSwitchReturnFocus.focus();
+  }
+  state.channelSwitchReturnFocus = null;
+  state.pendingChannel = '';
+}
+
+function applyChannelChange(channelId) {
+  const channel = getChannel(channelId);
+  if (channel.id === state.activeChannel) return;
+  stopQueueUpdates();
+  resetRecharge();
+  $('#batch-keys').value = '';
+  updateBatchControls();
+  $('#batch-results').replaceChildren();
+  $('#batch-summary').replaceChildren();
+  $('#batch-results-count').textContent = '共 0 条查询结果';
+  $('#batch-view-results').classList.add('hidden');
+  state.activeChannel = channel.id;
+  updateChannelInterface();
+  void loadAnnouncement(channel.id);
+  startQueueUpdates();
+  showToast(`已切换至${channel.label}`);
+}
+
+function requestChannelChange(channelId, trigger = document.activeElement) {
+  const channel = getChannel(channelId);
+  if (channel.id === state.activeChannel) return;
+  if (hasPendingRequest()) {
+    showToast('当前请求正在处理中，请完成后再切换通道。', 'error');
+    return;
+  }
+  if (hasProcessingTask()) {
+    showToast('当前任务正在处理中，请在原通道内跟踪任务进度。', 'error');
+    return;
+  }
+  if (!hasRechargeDraft()) {
+    applyChannelChange(channel.id);
+    return;
+  }
+  state.channelSwitchReturnFocus = trigger;
+  state.pendingChannel = channel.id;
+  $('#channel-switch-title').textContent = `切换至${channel.label}？`;
+  $('#channel-switch-copy').textContent = '切换后将清除当前填写的卡密与 Session，未提交的内容不会被保留。';
+  setModalVisibility($('#channel-switch-modal'), true);
+  $('#cancel-channel-switch').focus();
 }
 
 function clearPendingRedeemSession() {
@@ -553,11 +693,22 @@ function formatPlanName(value) {
   return names[plan.toLowerCase()] || plan;
 }
 
-function openSubscriptionModal(summary) {
+function openSubscriptionModal(summary, { canContinue = false, blockedReason = '' } = {}) {
+  const advanced = isAdvancedChannel();
   state.subscriptionModalReturnFocus = document.activeElement;
+  state.subscriptionCanContinue = canContinue;
   $('#subscription-account').textContent = summary.account_email || state.pendingRedeemSession?.accountLabel || '—';
   $('#subscription-plan').textContent = formatPlanName(summary.plan_type || summary.subscription_plan);
   $('#subscription-expiry').textContent = summary.expires_at ? formatDateTime(summary.expires_at) : '请在 ChatGPT 内查看';
+  $('#subscription-title').textContent = blockedReason || '当前账号已有会员';
+  $('#subscription-copy').textContent = canContinue && advanced
+    ? '嗨，已查询到你的账号当前已有以下订阅。进阶充值支持已有 Plus / Pro 账号继续提交，请确认账号和套餐无误后继续。'
+    : blockedReason === 'Team 账号暂不支持'
+      ? '当前账号属于 Team 订阅，进阶充值暂不支持该账号类型，请切换为个人账号后再提交。'
+      : blockedReason === '当前账号暂不支持'
+        ? '当前账号暂不符合进阶充值条件，请更换个人 Free、Plus 或 Pro 账号后再试。'
+      : '嗨，后台处理充值时，查询到你的账号当前已有以下订阅，已有会员的账号无法重复充值，请会员到期后再提交充值！';
+  $('#continue-subscription').classList.toggle('hidden', !canContinue);
   setModalVisibility($('#subscription-modal'), true);
   $('#close-subscription').focus();
 }
@@ -568,6 +719,7 @@ function closeSubscriptionModal({ restoreFocus = true, clearPending = true } = {
     state.subscriptionModalReturnFocus.focus();
   }
   state.subscriptionModalReturnFocus = null;
+  state.subscriptionCanContinue = false;
   if (clearPending) clearPendingRedeemSession();
 }
 
@@ -599,7 +751,7 @@ function closeOperationModal({ restoreFocus = true } = {}) {
   state.pendingOperation = '';
 }
 
-function activateModeTab(tab) {
+function activateModeTab(tab, { focus = false } = {}) {
   if (!tab) return;
   $$('.mode-tab').forEach((item) => {
     const active = item === tab;
@@ -608,6 +760,21 @@ function activateModeTab(tab) {
     item.tabIndex = active ? 0 : -1;
   });
   $$('.tab-panel').forEach((panel) => panel.classList.toggle('active', panel.id === tab.dataset.panel));
+  if (focus) tab.focus();
+}
+
+function handleModeTabKeydown(event) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = $$('.mode-tab');
+  const currentIndex = tabs.indexOf(event.currentTarget);
+  if (currentIndex < 0) return;
+  event.preventDefault();
+  const nextIndex = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? tabs.length - 1
+      : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  activateModeTab(tabs[nextIndex], { focus: true });
 }
 
 function resetQuickToolResult() {
@@ -640,8 +807,9 @@ function openQuickTool(tool) {
   resetQuickToolResult();
 
   const isSubscription = tool === 'subscription';
+  const advanced = isAdvancedChannel();
   const copy = {
-    subscription: '粘贴 Session JSON 或 accessToken，查询当前账号的订阅摘要。',
+    subscription: advanced ? '粘贴完整 Session JSON，查询当前账号的订阅摘要。' : '粘贴 Session JSON 或 accessToken，查询当前账号的订阅摘要。',
     refresh: '请先检查卡密的换码资格，换码成功后旧码会立即失效，既不能兑换也不能查询；新码只展示一次，请务必保存好新卡密',
     cancel: '先确认任务仍在排队。只有尚未开始处理的任务才能取消。',
   }[tool];
@@ -660,6 +828,9 @@ function openQuickTool(tool) {
   $('#quick-tool-copy').textContent = copy;
   $('#quick-card-field').classList.toggle('hidden', isSubscription);
   $('#quick-subscription-field').classList.toggle('hidden', !isSubscription);
+  $('#quick-subscription-input').placeholder = advanced
+    ? '粘贴完整 Session JSON'
+    : '粘贴完整 Session JSON，或直接粘贴 accessToken';
   $('#quick-card-input').value = '';
   $('#quick-card-input').disabled = false;
   $('#quick-subscription-input').value = '';
@@ -688,7 +859,7 @@ function closeQuickTool({ restoreFocus = true } = {}) {
 
 async function queryQuickSubscription() {
   const button = $('#submit-quick-tool');
-  const tokenInput = $('#quick-subscription-input').value.trim();
+  let tokenInput = $('#quick-subscription-input').value.trim();
   if (!tokenInput) {
     showQuickToolResult('请粘贴 Session JSON 或 accessToken。', { error: true });
     $('#quick-subscription-input').focus();
@@ -699,6 +870,17 @@ async function queryQuickSubscription() {
     return;
   }
 
+  if (isAdvancedChannel()) {
+    try {
+      tokenInput = parseSessionJsonValue(tokenInput).sessionJson;
+    } catch (error) {
+      showQuickToolResult(error.message, { error: true });
+      $('#quick-subscription-input').focus();
+      return;
+    }
+  }
+
+  $('#quick-subscription-input').value = '';
   setLoading(button, true, '正在查询…');
   try {
     const result = await apiRequest('/check-subscription', {
@@ -716,7 +898,6 @@ async function queryQuickSubscription() {
     $('#quick-subscription-plan').textContent = formatPlanName(summary.plan_type || summary.subscription_plan || 'free');
     $('#quick-subscription-expiry').textContent = summary.expires_at ? formatDateTime(summary.expires_at) : '—';
     $('#quick-subscription-details').classList.remove('hidden');
-    $('#quick-subscription-input').value = '';
     completeQuickTool();
   } catch (error) {
     showQuickToolResult(error.message, { error: true });
@@ -906,8 +1087,19 @@ function buildCreateTaskPayload(cardKey, sessionInfo) {
   };
 }
 
+function isTeamSubscription(summary) {
+  const plan = String(summary?.plan_type || summary?.subscription_plan || '').toLowerCase();
+  return summary?.is_team === true || plan.includes('team');
+}
+
+function isPlusOrProSubscription(summary) {
+  const plan = String(summary?.plan_type || summary?.subscription_plan || '').toLowerCase();
+  return plan.includes('plus') || plan.includes('pro');
+}
+
 async function verifyCard() {
   const button = $('#verify-btn');
+  const channel = getChannel();
   if (button.disabled) return;
   const cardKey = normalizeKey($('#card-key').value);
   $('#card-key').value = cardKey;
@@ -926,7 +1118,7 @@ async function verifyCard() {
     if (result.valid !== true) {
       if (result.pending === true) {
         try {
-          await openExistingTask(cardKey, { cancellable: Boolean(result.cancellable) });
+          await openExistingTask(cardKey, { channel: channel.id, cancellable: channel.supportsCancel && Boolean(result.cancellable) });
           showToast('该卡密已有任务，已为你打开处理进度');
           return;
         } catch {
@@ -939,7 +1131,7 @@ async function verifyCard() {
     state.verifiedPlan = String(result.plan_type || '');
     state.refreshRemaining = Math.max(0, Math.floor(Number(result.refresh_remaining ?? 0) || 0));
     $('#masked-card-key').textContent = maskKey(cardKey);
-    $('#refresh-cdk-btn').classList.toggle('hidden', state.refreshRemaining < 1);
+    $('#refresh-cdk-btn').classList.toggle('hidden', !channel.supportsRefresh || state.refreshRemaining < 1);
     $('#refresh-cdk-btn').textContent = `换一张卡密（剩余 ${state.refreshRemaining} 次）`;
     $('#refresh-result').classList.add('hidden');
     $('#refreshed-card-code').textContent = '';
@@ -955,6 +1147,7 @@ async function verifyCard() {
 
 async function prepareRedeem() {
   const button = $('#redeem-btn');
+  const channel = getChannel();
   if (button.disabled) return;
   let sessionInfo;
   try {
@@ -974,6 +1167,9 @@ async function prepareRedeem() {
       if (['invalid_input', 'invalid_session'].includes(result.code)) {
         throw new Error(result.error || 'Session 无效或已过期，请重新获取后再试');
       }
+      if (channel.id === 'advanced') {
+        throw new Error(result.error || '进阶充值需要先确认账号订阅状态，请稍后重试');
+      }
       const uncheckedSession = Object.freeze({
         ...sessionInfo,
         subscriptionWarning: true,
@@ -989,13 +1185,30 @@ async function prepareRedeem() {
     });
     state.pendingRedeemSession = confirmedSession;
     const plan = String(summary.plan_type || '').toLowerCase();
-    if (summary.has_active_subscription === true || (plan && plan !== 'free')) {
-      openSubscriptionModal(summary);
+    const hasMembership = summary.has_active_subscription === true || (plan && plan !== 'free');
+    if (isTeamSubscription(summary)) {
+      openSubscriptionModal(summary, { blockedReason: 'Team 账号暂不支持' });
+      return;
+    }
+    if (hasMembership) {
+      const canContinue = channel.allowsActiveSubscription
+        && (summary.can_redeem !== false || isPlusOrProSubscription(summary));
+      if (canContinue) {
+        openSubscriptionModal(summary, { canContinue: true });
+      } else {
+        openSubscriptionModal(summary, {
+          blockedReason: channel.id === 'advanced' ? '当前账号暂不支持' : '',
+        });
+      }
+      return;
+    }
+    if (channel.id === 'advanced' && summary.can_redeem === false) {
+      openSubscriptionModal(summary, { blockedReason: '当前账号暂不支持' });
       return;
     }
     openAccountConfirmModal(confirmedSession);
   } catch (error) {
-    if (!error.status || [400, 401, 403].includes(error.status)) {
+    if (channel.id === 'advanced' || !error.status || [400, 401, 403].includes(error.status)) {
       clearPendingRedeemSession();
       showToast(error.message, 'error');
     } else {
@@ -1012,6 +1225,7 @@ async function prepareRedeem() {
 
 async function refreshVerifiedCard() {
   const button = $('#confirm-operation');
+  if (!getChannel().supportsRefresh) return;
   const oldCode = state.verifiedCardKey;
   if (!oldCode || state.refreshRemaining < 1 || button.disabled) return;
   setLoading(button, true, '正在换码…');
@@ -1032,7 +1246,7 @@ async function refreshVerifiedCard() {
       ? `仍可换码 ${state.refreshRemaining} 次`
       : '换码次数已用完';
     $('#refresh-result').classList.remove('hidden');
-    $('#refresh-cdk-btn').classList.toggle('hidden', state.refreshRemaining < 1);
+    $('#refresh-cdk-btn').classList.toggle('hidden', !getChannel().supportsRefresh || state.refreshRemaining < 1);
     $('#refresh-cdk-btn').textContent = `换一张卡密（剩余 ${state.refreshRemaining} 次）`;
     closeOperationModal({ restoreFocus: false });
     $('#copy-refreshed-card').focus();
@@ -1071,19 +1285,20 @@ function renderTask(task) {
   }
   $('#refresh-task-btn').classList.toggle('hidden', status.terminal);
   $('#retry-task-btn').classList.toggle('hidden', status.kind !== 'failed');
-  $('#cancel-task-btn').classList.toggle('hidden', !state.activeTask?.cancellable || status.terminal);
+  $('#cancel-task-btn').classList.toggle('hidden', !getChannel(state.activeTask?.channel).supportsCancel || !state.activeTask?.cancellable || status.terminal);
   showStep(3);
   return status;
 }
 
-function activateTask(task, cardKey, { cancellable } = {}) {
-  const previousTask = state.activeTask?.cardKey === cardKey ? state.activeTask : null;
+function activateTask(task, cardKey, { channel = state.activeChannel, cancellable } = {}) {
+  const previousTask = state.activeTask?.cardKey === cardKey && state.activeTask.channel === channel ? state.activeTask : null;
   const status = getTaskStatus(task);
   const taskStatus = String(task?.task_status || task?.status || '').trim().toLowerCase();
   const canCancel = status.terminal || taskStatus === 'manual_review'
     ? false
-    : Boolean(cancellable ?? previousTask?.cancellable);
+    : Boolean(getChannel(channel).supportsCancel && (cancellable ?? previousTask?.cancellable));
   state.activeTask = {
+    channel,
     cardKey,
     taskId: task.task_id || state.activeTask?.taskId || '',
     cancellable: canCancel,
@@ -1105,10 +1320,11 @@ function scheduleTaskPoll(delay = CONFIG.taskPollInterval) {
   state.taskPollTimer = setTimeout(() => refreshActiveTask({ silent: true }), delay);
 }
 
-async function fetchTask(cardKey) {
+async function fetchTask(cardKey, channel = state.activeTask?.channel || state.activeChannel) {
   const payload = await apiRequest('/lookup/tasks', {
     method: 'POST',
     body: { codes: [cardKey] },
+    channel,
   });
   if (!Array.isArray(payload.tasks)) throw new Error('任务查询接口返回格式异常');
   const normalized = normalizeKey(cardKey).toLowerCase();
@@ -1120,18 +1336,21 @@ async function fetchTask(cardKey) {
 }
 
 async function openExistingTask(cardKey, options = {}) {
-  const task = await fetchTask(cardKey);
+  const task = await fetchTask(cardKey, options.channel);
   activateTask(task, cardKey, options);
 }
 
 async function discoverTaskCancellation(cardKey) {
+  const channel = state.activeTask?.channel;
+  if (!getChannel(channel).supportsCancel) return;
   try {
     const result = await apiRequest('/verify-cdk', {
       method: 'POST',
       body: { cdk_code: cardKey },
       timeout: 8000,
+      channel,
     });
-    if (state.activeTask?.cardKey !== cardKey || result.pending !== true) return;
+    if (state.activeTask?.cardKey !== cardKey || state.activeTask?.channel !== channel || result.pending !== true) return;
     state.activeTask.cancellable = Boolean(result.cancellable);
     renderTask(state.activeTask.latestTask || {});
   } catch {
@@ -1142,13 +1361,14 @@ async function discoverTaskCancellation(cardKey) {
 async function refreshActiveTask({ silent = false } = {}) {
   if (!state.activeTask?.cardKey) return;
   const cardKey = state.activeTask.cardKey;
+  const channel = state.activeTask.channel;
   const generation = state.taskGeneration;
   const button = $('#refresh-task-btn');
   if (!silent) setLoading(button, true, '正在刷新…');
   try {
-    const task = await fetchTask(cardKey);
-    if (generation !== state.taskGeneration || state.activeTask?.cardKey !== cardKey) return;
-    activateTask(task, cardKey);
+    const task = await fetchTask(cardKey, channel);
+    if (generation !== state.taskGeneration || state.activeTask?.cardKey !== cardKey || state.activeTask?.channel !== channel) return;
+    activateTask(task, cardKey, { channel });
     if (!silent) showToast('任务状态已更新');
   } catch (error) {
     if (generation !== state.taskGeneration || state.activeTask?.cardKey !== cardKey) return;
@@ -1163,25 +1383,28 @@ async function submitRedeem(sessionInfo) {
   const button = $('#redeem-btn');
   if (button.disabled || !sessionInfo?.sessionJson) return;
   const cardKey = state.verifiedCardKey;
+  const channel = state.activeChannel;
+  $('#session-json').value = '';
+  clearPendingRedeemSession();
   setLoading(button, true, '正在提交…');
   try {
     const task = await apiRequest('/create-task', {
       method: 'POST',
       body: buildCreateTaskPayload(cardKey, sessionInfo),
+      channel,
     });
     if (!task.task_id) throw new Error('接口未返回任务编号，请查询卡密状态');
-    activateTask(task, cardKey);
-    void discoverTaskCancellation(cardKey);
+    activateTask(task, cardKey, { channel });
+    if (getChannel(channel).supportsCancel) void discoverTaskCancellation(cardKey);
   } catch (error) {
     if (error.status === 409 && error.payload?.task_id) {
-      activateTask(error.payload, cardKey);
-      void discoverTaskCancellation(cardKey);
+      activateTask(error.payload, cardKey, { channel });
+      if (getChannel(channel).supportsCancel) void discoverTaskCancellation(cardKey);
       showToast('该卡密已有任务，已为你打开处理进度');
     } else {
-      showToast(error.message, 'error');
+      showToast(`${error.message}；Session 已清除，请重新粘贴后再试`, 'error');
     }
   } finally {
-    clearPendingRedeemSession();
     setLoading(button, false);
   }
 }
@@ -1189,12 +1412,14 @@ async function submitRedeem(sessionInfo) {
 async function cancelActiveTask() {
   const button = $('#confirm-operation');
   const cardKey = state.activeTask?.cardKey;
-  if (!cardKey || button.disabled) return;
+  const channel = state.activeTask?.channel;
+  if (!cardKey || !getChannel(channel).supportsCancel || button.disabled) return;
   setLoading(button, true, '正在取消…');
   try {
     const result = await apiRequest('/cancel-task', {
       method: 'POST',
       body: { cdk_code: cardKey },
+      channel,
     });
     if (result.ok !== true) throw new Error(result.error || '任务未能取消');
     stopTaskPolling();
@@ -1352,6 +1577,7 @@ function createResultMeta(item, status) {
 
 async function queryBatch() {
   const button = $('#batch-btn');
+  const channel = state.activeChannel;
   if (button.disabled) return;
   const codes = parseBatchKeys();
   if (codes.length > 100) return showToast(`单次最多查询 100 个，当前为 ${codes.length} 个`, 'error');
@@ -1364,7 +1590,9 @@ async function queryBatch() {
     const payload = await apiRequest('/lookup/tasks', {
       method: 'POST',
       body: { codes },
+      channel,
     });
+    if (channel !== state.activeChannel) return;
     if (!Array.isArray(payload.tasks)) throw new Error('查询接口返回格式异常');
     const items = mergeTaskResults(codes, payload.tasks);
     renderBatchSummary(items);
@@ -1404,7 +1632,7 @@ async function queryBatch() {
       if (meta.childElementCount) row.append(meta);
       return row;
     }));
-    $('#batch-results-count').textContent = `共 ${items.length} 条查询结果`;
+    $('#batch-results-count').textContent = `${getChannel(channel).label} · 共 ${items.length} 条查询结果`;
     $('#batch-view-results').classList.remove('hidden');
     openBatchResultsModal({ returnFocus: button });
   } catch (error) {
@@ -1426,8 +1654,13 @@ function retryFailedTask() {
 }
 
 function bindEvents() {
+  $$('.channel-choice').forEach((button) => {
+    button.addEventListener('click', () => requestChannelChange(button.dataset.channel, button));
+  });
+
   $$('.mode-tab').forEach((tab) => {
     tab.addEventListener('click', () => activateModeTab(tab));
+    tab.addEventListener('keydown', handleModeTabKeydown);
   });
 
   $$('.utility-action').forEach((button) => {
@@ -1497,9 +1730,23 @@ function bindEvents() {
     submitRedeem(sessionInfo);
   });
 
+  $('.channel-switch-modal-close').addEventListener('click', () => closeChannelSwitchModal());
+  $('#cancel-channel-switch').addEventListener('click', () => closeChannelSwitchModal());
+  $('#confirm-channel-switch').addEventListener('click', () => {
+    const nextChannel = state.pendingChannel;
+    const returnFocus = state.channelSwitchReturnFocus;
+    closeChannelSwitchModal({ restoreFocus: false });
+    if (nextChannel) applyChannelChange(nextChannel);
+    returnFocus?.focus();
+  });
+  $('#channel-switch-modal').addEventListener('click', (event) => {
+    if (event.target.id === 'channel-switch-modal') closeChannelSwitchModal();
+  });
+
   $('.subscription-modal-close').addEventListener('click', () => closeSubscriptionModal());
   $('#close-subscription').addEventListener('click', () => closeSubscriptionModal());
   $('#continue-subscription').addEventListener('click', () => {
+    if (!state.subscriptionCanContinue) return;
     const sessionInfo = state.pendingRedeemSession;
     const returnFocus = state.subscriptionModalReturnFocus;
     closeSubscriptionModal({ restoreFocus: false, clearPending: false });
@@ -1550,6 +1797,7 @@ function bindEvents() {
     if (trapModalFocus(event)) return;
     if (event.key !== 'Escape') return;
     if (!$('#account-confirm-modal').classList.contains('hidden')) closeAccountConfirmModal();
+    else if (!$('#channel-switch-modal').classList.contains('hidden')) closeChannelSwitchModal();
     else if (!$('#subscription-modal').classList.contains('hidden')) closeSubscriptionModal();
     else if (!$('#operation-modal').classList.contains('hidden')) closeOperationModal();
     else if (!$('#quick-tool-modal').classList.contains('hidden')) closeQuickTool();
@@ -1561,8 +1809,10 @@ if (typeof document !== 'undefined') {
   configureBrand();
   setupEntranceMotion();
   startHandwrittenIntro();
+  startHandwrittenAmbientMotion();
   startHeroSubtitleRotation();
   bindEvents();
+  updateChannelInterface();
   prefillCardKeyFromUrl();
   loadAnnouncement();
   startQueueUpdates();
