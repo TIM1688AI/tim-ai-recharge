@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const advanced = require('./advanced');
 
 const configuredPort = Number(process.env.PORT);
 const host = process.env.HOST || '0.0.0.0';
@@ -255,13 +256,12 @@ function normalizeAdvancedCdk(value) {
 }
 
 function isAdvancedCdkCode(value) {
-  return typeof value === 'string' && value.length <= 128
-    && /^(?:TIM|TIM5X|TIM20X)-[A-Z0-9]{11}$/.test(normalizeAdvancedCdk(value));
+  return advanced.validCode(value);
 }
 
 function toSupplierCdk(value) {
   if (!isAdvancedCdkCode(value)) throw new Error('进阶卡密格式不正确');
-  return normalizeAdvancedCdk(value).replace(/^TIM(5X|20X)?-/, 'JZ$1-');
+  return advanced.supplierCode(value);
 }
 
 // Only documented card fields and user-facing messages are adapted.
@@ -307,6 +307,7 @@ function validateProxyPayload(routeOrPath, payload) {
     if (!acceptsCdk(payload.cdk_code)) return 'cdk_code 格式或长度不正确';
     const session = parseSessionJson(payload.session_json);
     if (!session) return 'session_json 不是有效的 JSON 对象或内容过大';
+    if (route.channel === 'advanced') return null;
     const token = session.accessToken || session.access_token;
     if (typeof token !== 'string' || !token.trim()) return 'session_json 中缺少 accessToken';
     const sessionToken = session.sessionToken || session.session_token;
@@ -323,8 +324,9 @@ function validateProxyPayload(routeOrPath, payload) {
       : 'token_input 格式或长度不正确';
   }
   if (upstreamPath === 'lookup/tasks') {
-    if (!Array.isArray(payload.codes) || payload.codes.length < 1 || payload.codes.length > 100) {
-      return 'codes 数量必须为 1–100 个';
+    const limit = route.channel === 'advanced' ? 50 : 100;
+    if (!Array.isArray(payload.codes) || payload.codes.length < 1 || payload.codes.length > limit) {
+      return `codes 数量必须为 1–${limit} 个`;
     }
     return payload.codes.every(acceptsCdk)
       ? null
@@ -363,6 +365,15 @@ function buildUpstreamHeaders(route, body) {
 }
 
 function forwardUpstream(request, response, route, body) {
+  if (route.channel === 'advanced') {
+    const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+    advanced.handle(route, payload).then(result => {
+      if (!response.destroyed) sendJson(response, 200, result);
+    }).catch(() => {
+      if (!response.destroyed) sendJson(response, 502, { error: route.routeName === 'create-task' ? '提交未确认，请查询卡密结果；请勿重复提交。如持续异常请联系供应商。' : '进阶服务暂不可用，请稍后重试或联系供应商' });
+    });
+    return;
+  }
   const provider = getProvider(route.channel);
   const target = buildUpstreamUrl(route.upstreamPath, request.url, provider.baseUrl);
   const transport = target.protocol === 'https:' ? https : http;
@@ -500,7 +511,7 @@ function proxyApi(request, response, route, publicPath) {
       return;
     }
     if (!enforceRateLimit(request, response, publicPath)) return;
-    forwardUpstream(request, response, route, Buffer.from(JSON.stringify(buildUpstreamPayload(route, payload))));
+    forwardUpstream(request, response, route, Buffer.from(JSON.stringify(route.channel === 'advanced' ? payload : buildUpstreamPayload(route, payload))));
   });
 }
 

@@ -7,7 +7,7 @@ const CONFIG = {
   queuePollInterval: 15000,
   channels: Object.freeze({
     regular: Object.freeze({ id: 'regular', label: '常规充值', supportsRefresh: true, supportsCancel: true, supportsQueueEvents: true, allowsActiveSubscription: false, taskPollSchedule: [5000], cardNote: '常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。', recordsNote: '查询常规充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
-    advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [10000, 15000, 30000], cardNote: '进阶充值：已有 Plus / Pro 账号可继续提交，Team 账号暂不支持。', recordsNote: '查询进阶充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
+    advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [10000, 15000, 30000], cardNote: '进阶充值：支持 TIM 系列及 16 位年度卡密。已有会员须通过资格检查，Team 账号暂不支持。', recordsNote: '查询卡密与充值结果；单次最多 50 个，已使用不等于充值成功' }),
   }),
 };
 
@@ -379,7 +379,7 @@ function normalizeChannelKey(value, channelId = state.activeChannel) {
 function isPlausibleChannelKey(value, channelId = state.activeChannel) {
   const key = normalizeChannelKey(value, channelId);
   return isAdvancedChannel(channelId)
-    ? /^(?:TIM|TIM5X|TIM20X)-[A-Z0-9]{11}$/.test(key)
+    ? /^(?:TIM(?:5X|20X)?-[A-Z0-9]{11}|[A-Z0-9]{16})$/.test(key)
     : isPlausibleKey(key);
 }
 
@@ -513,6 +513,12 @@ function setQueueMessage(message, { state = 'loading', retry = false, detail = '
 }
 
 function renderQueueStatus(payload, updateLabel = '实时更新') {
+  if (isAdvancedChannel()) {
+    const stock = payload.stock;
+    if (!stock || !['plus', 'plus_year', 'pro5x', 'pro20x'].every(k => Number.isSafeInteger(stock[k]) && stock[k] >= 0)) throw new Error('库存不可用');
+    setQueueMessage(`库存参考：月度 ${stock.plus} · 年度 ${stock.plus_year} · 5X ${stock.pro5x} · 20X ${stock.pro20x}`, { state: 'clear', detail: '本地凭证库存，不预留库存，不代表卡密充值资格' });
+    return;
+  }
   const queue = getQueueDisplay(getQueueCount(payload));
   setQueueMessage(queue.message, {
     state: queue.count > 0 ? 'busy' : 'clear',
@@ -689,11 +695,12 @@ function clearPendingRedeemSession() {
 
 function openAccountConfirmModal(sessionInfo, { returnFocus = document.activeElement } = {}) {
   state.modalReturnFocus = returnFocus;
-  state.pendingRedeemSession = Object.freeze({ ...sessionInfo });
+  state.pendingRedeemSession = Object.freeze({ ...sessionInfo, confirmedCard: state.verifiedCardKey, confirmedChannel: state.activeChannel });
   $('#confirm-account-value').textContent = sessionInfo.accountLabel;
   $('#account-confirm-note').textContent = sessionInfo.subscriptionWarning
     ? '订阅状态暂未确认，服务端会在处理时实时复查。请确认账号无误。'
     : '请仔细核对账号，确认后才会提交充值。';
+  if (isAdvancedChannel()) $('#account-confirm-note').textContent = `充值产品：${state.verifiedPlan || '以卡密验证结果为准'}。${sessionInfo.replacementWarning ? '本次充值可能替换现有订阅，请确认接受后再提交。' : '请核对账号与产品，确认后提交。'}`;
   setModalVisibility($('#account-confirm-modal'), true);
   $('#cancel-account-redeem').focus();
 }
@@ -738,12 +745,12 @@ function openSubscriptionModal(summary, { canContinue = false, blockedReason = '
   $('#subscription-expiry').textContent = summary.expires_at ? formatDateTime(summary.expires_at) : '请在 ChatGPT 内查看';
   $('#subscription-title').textContent = blockedReason || '当前账号已有会员';
   $('#subscription-copy').textContent = canContinue && advanced
-    ? '嗨，已查询到你的账号当前已有以下订阅。进阶充值支持已有 Plus / Pro 账号继续提交，请确认账号和套餐无误后继续。'
+    ? '当前账号已有订阅，本次充值可能替换现有订阅。请核对账号与充值产品，接受此影响后再继续。'
     : blockedReason === 'Team 账号暂不支持'
       ? '当前账号属于 Team 订阅，进阶充值暂不支持该账号类型，请切换为个人账号后再提交。'
       : blockedReason === '当前账号暂不支持'
         ? '当前账号暂不符合进阶充值条件，请更换个人 Free、Plus 或 Pro 账号后再试。'
-      : '嗨，后台处理充值时，查询到你的账号当前已有以下订阅，已有会员的账号无法重复充值，请会员到期后再提交充值！';
+      : advanced ? '当前账号未通过充值资格检查，请重新检查账号或联系供应商。' : '嗨，后台处理充值时，查询到你的账号当前已有以下订阅，已有会员的账号无法重复充值，请会员到期后再提交充值！';
   $('#continue-subscription').classList.toggle('hidden', !canContinue);
   setModalVisibility($('#subscription-modal'), true);
   $('#close-subscription').focus();
@@ -1062,6 +1069,10 @@ function resetRecharge() {
 }
 
 function getTaskStatus(task) {
+  if (task?.advanced && task.status_label) {
+    const terminal = ['completed', 'failed', 'active', 'not_found'].includes(task.task_status);
+    return { kind: task.task_status === 'completed' ? 'completed' : task.task_status === 'failed' ? 'failed' : task.task_status === 'active' || task.task_status === 'not_found' ? 'missing' : 'processing', label: task.status_label, terminal };
+  }
   const status = String(task?.task_status || task?.status || '').trim().toLowerCase();
   if (status === 'completed') return { kind: 'completed', label: '充值已完成', terminal: true };
   if (status === 'failed') return { kind: 'failed', label: '充值处理失败', terminal: true };
@@ -1103,6 +1114,7 @@ function parseSessionJsonValue(value) {
   if (!session || typeof session !== 'object' || Array.isArray(session)) {
     throw new Error('Session JSON 必须是完整对象');
   }
+  if (isAdvancedChannel()) return Object.freeze({ sessionJson: JSON.stringify(session), accountLabel: session.user?.email || session.account?.email || '待接口确认', planType: '' });
   const token = session.accessToken || session.access_token;
   if (typeof token !== 'string' || !token.trim()) throw new Error('Session JSON 中缺少 accessToken');
   const sessionToken = session.sessionToken || session.session_token;
@@ -1139,12 +1151,13 @@ function isPlusOrProSubscription(summary) {
 async function verifyCard() {
   const button = $('#verify-btn');
   const channel = getChannel();
+  const generation = state.taskGeneration;
   if (button.disabled) return;
   const cardKey = normalizeChannelKey($('#card-key').value, channel.id);
   $('#card-key').value = cardKey;
   if (!isPlausibleChannelKey(cardKey, channel.id)) {
     showToast(channel.id === 'advanced'
-      ? '请输入 TIM、TIM5X 或 TIM20X 开头的有效卡密'
+      ? '请输入 TIM 系列卡密或 16 位年度卡密'
       : '请输入 4–128 位有效卡密', 'error');
     $('#card-key').focus();
     return;
@@ -1156,6 +1169,7 @@ async function verifyCard() {
       method: 'POST',
       body: { cdk_code: cardKey },
     });
+    if (generation !== state.taskGeneration || channel.id !== state.activeChannel || cardKey !== normalizeChannelKey($('#card-key').value, channel.id)) return;
     if (result.valid !== true) {
       if (result.pending === true) {
         try {
@@ -1197,6 +1211,8 @@ async function verifyCard() {
 async function prepareRedeem() {
   const button = $('#redeem-btn');
   const channel = getChannel();
+  const confirmedCard = state.verifiedCardKey;
+  const generation = state.taskGeneration;
   if (button.disabled) return;
   let sessionInfo;
   try {
@@ -1228,9 +1244,17 @@ async function prepareRedeem() {
       return;
     }
     const summary = result.summary;
+    if (generation !== state.taskGeneration || channel.id !== state.activeChannel || confirmedCard !== state.verifiedCardKey || sessionInfo.sessionJson !== JSON.stringify(JSON.parse($('#session-json').value))) return;
+    if (channel.id === 'advanced' && (summary.can_redeem !== true || summary.is_team !== false)) {
+      openSubscriptionModal(summary, { blockedReason: '当前账号未通过充值资格检查' });
+      return;
+    }
     const confirmedSession = Object.freeze({
       ...sessionInfo,
       accountLabel: summary.account_email || sessionInfo.accountLabel,
+      confirmedCard,
+      confirmedChannel: channel.id,
+      replacementWarning: summary.is_paid === true,
     });
     state.pendingRedeemSession = confirmedSession;
     const plan = String(summary.plan_type || '').toLowerCase();
@@ -1241,7 +1265,7 @@ async function prepareRedeem() {
     }
     if (hasMembership) {
       const canContinue = channel.allowsActiveSubscription
-        && (summary.can_redeem !== false || isPlusOrProSubscription(summary));
+        && summary.can_redeem === true;
       if (canContinue) {
         openSubscriptionModal(summary, { canContinue: true });
       } else {
@@ -1327,6 +1351,8 @@ function renderTask(task) {
       ? '本次处理未完成，你可以查看原因后重新提交。'
       : '任务正在后台处理，页面会自动更新进度。';
   $('#task-id').textContent = task.task_id || state.activeTask?.taskId || '—';
+  $('#task-id').parentElement.classList.toggle('hidden', Boolean(task.advanced));
+  if (task.advanced) $('#task-result-copy').textContent = status.kind === 'completed' ? '充值已完成，请返回 ChatGPT 核对订阅。' : '请以查询结果为准；结果未确认前请勿重复充值。需要协助请联系供应商。';
   $('#task-status').textContent = status.label;
   $('#task-account').textContent = task.account_email ? maskEmail(task.account_email) : '等待识别';
   $('#task-plan').textContent = formatRechargeType(task.plan_type || state.activeTask?.planType);
@@ -1339,7 +1365,7 @@ function renderTask(task) {
     failure.classList.add('hidden');
   }
   $('#refresh-task-btn').classList.toggle('hidden', status.terminal);
-  $('#retry-task-btn').classList.toggle('hidden', status.kind !== 'failed');
+  $('#retry-task-btn').classList.toggle('hidden', Boolean(task.advanced) || status.kind !== 'failed');
   $('#cancel-task-btn').classList.toggle('hidden', !getChannel(state.activeTask?.channel).supportsCancel || !state.activeTask?.cancellable || status.terminal);
   showStep(3);
   return status;
@@ -1347,6 +1373,8 @@ function renderTask(task) {
 
 function activateTask(task, cardKey, { channel = state.activeChannel, cancellable } = {}) {
   const previousTask = state.activeTask?.cardKey === cardKey && state.activeTask.channel === channel ? state.activeTask : null;
+  if (previousTask?.latestTask?.task_status === 'completed') return;
+  if (channel === 'advanced' && previousTask && task.task_status === 'active') task = { ...task, task_status: 'unconfirmed', status_label: '提交结果待确认，请勿重复充值' };
   const status = getTaskStatus(task);
   const taskStatus = String(task?.task_status || task?.status || '').trim().toLowerCase();
   const previousProgress = previousTask
@@ -1382,6 +1410,11 @@ function activateTask(task, cardKey, { channel = state.activeChannel, cancellabl
 
 function scheduleTaskPoll(delay) {
   stopTaskPolling();
+  if (document.hidden) return;
+  if (state.taskPollAttempt >= 60) {
+    $('#task-result-copy').textContent = '暂未确认最终结果，自动查询已暂停。可点击刷新结果，或联系供应商核查；请勿重复充值。';
+    return;
+  }
   const scheduledDelay = Math.max(getTaskPollDelay(), Number(delay) || 0);
   state.taskPollAttempt += 1;
   state.taskPollTimer = setTimeout(() => refreshActiveTask({ silent: true }), scheduledDelay);
@@ -1451,19 +1484,34 @@ async function submitRedeem(sessionInfo) {
   if (button.disabled || !sessionInfo?.sessionJson) return;
   const cardKey = state.verifiedCardKey;
   const channel = state.activeChannel;
+  let unchanged = false;
+  try { unchanged = sessionInfo.sessionJson === JSON.stringify(JSON.parse($('#session-json').value)); } catch { /* Invalid edited input requires a fresh confirmation. */ }
+  if (sessionInfo.confirmedCard !== cardKey || sessionInfo.confirmedChannel !== channel || !unchanged) {
+    clearPendingRedeemSession();
+    return showToast('账号或卡密已变化，请重新检查并确认', 'error');
+  }
   $('#session-json').value = '';
   clearPendingRedeemSession();
   setLoading(button, true, '正在提交…');
   try {
-    const task = await apiRequest('/create-task', {
+    const pendingRequest = apiRequest('/create-task', {
       method: 'POST',
       body: buildCreateTaskPayload(cardKey, sessionInfo),
       channel,
+      timeout: channel === 'advanced' ? 130000 : CONFIG.requestTimeout,
     });
-    if (!task.task_id) throw new Error('接口未返回任务编号，请查询卡密状态');
+    sessionInfo = null;
+    const task = await pendingRequest;
+    if (channel !== state.activeChannel) return;
+    if (channel !== 'advanced' && !task.task_id) throw new Error('接口未返回任务编号，请查询卡密状态');
     activateTask(task, cardKey, { channel });
     if (getChannel(channel).supportsCancel) void discoverTaskCancellation(cardKey);
   } catch (error) {
+    if (channel === 'advanced') {
+      if (channel === state.activeChannel) activateTask({ advanced: true, task_status: 'unconfirmed', status_label: '提交结果待确认' }, cardKey, { channel });
+      showToast('提交结果未确认，请查询结果，不要重复充值', 'error');
+      return;
+    }
     if (error.status === 409 && error.payload?.task_id) {
       activateTask(error.payload, cardKey, { channel });
       if (getChannel(channel).supportsCancel) void discoverTaskCancellation(cardKey);
@@ -1533,8 +1581,9 @@ function parseBatchKeys() {
 
 function updateBatchControls() {
   const count = parseBatchKeys().length;
-  $('#key-count').textContent = `${count} / 100`;
-  $('#key-count').classList.toggle('over-limit', count > 100);
+  const limit = isAdvancedChannel() ? 50 : 100;
+  $('#key-count').textContent = `${count} / ${limit}`;
+  $('#key-count').classList.toggle('over-limit', count > limit);
   $('#batch-clear').disabled = $('#batch-keys').value.length === 0;
   $('#batch-view-results').classList.add('hidden');
 }
@@ -1666,7 +1715,8 @@ async function queryBatch() {
   const channel = state.activeChannel;
   if (button.disabled) return;
   const codes = parseBatchKeys();
-  if (codes.length > 100) return showToast(`单次最多查询 100 个，当前为 ${codes.length} 个`, 'error');
+  const limit = isAdvancedChannel() ? 50 : 100;
+  if (codes.length > limit) return showToast(`单次最多查询 ${limit} 个，当前为 ${codes.length} 个`, 'error');
   if (!codes.length) return showToast('请至少输入一个卡密', 'error');
   if (codes.some((key) => !isPlausibleChannelKey(key, channel))) {
     return showToast(channel === 'advanced' ? '列表中存在格式不正确的进阶充值卡密' : '列表中存在长度异常的卡密', 'error');
@@ -1894,6 +1944,10 @@ function bindEvents() {
 }
 
 if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopTaskPolling();
+    else if (state.activeTask && !getTaskStatus(state.activeTask.latestTask).terminal) void refreshActiveTask({ silent: true });
+  });
   configureBrand();
   setupEntranceMotion();
   startHandwrittenIntro();
