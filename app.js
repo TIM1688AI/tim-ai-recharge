@@ -518,8 +518,8 @@ function getStockLevel(value) {
 }
 
 function getStockLabel(stock) {
-  return [['plus', '月Plus'], ['plus_year', '年Plus'], ['pro5x', '月5X Pro'], ['pro20x', '月20X Pro']]
-    .map(([key, label]) => `${label}：${getStockLevel(stock?.[key])}`).join(' / ');
+  return '库存状态：' + [['plus', '月Plus'], ['plus_year', '年Plus'], ['pro5x', '月5X Pro'], ['pro20x', '月20X Pro']]
+    .map(([key, label]) => `${label}：${getStockLevel(stock?.[key])}`).join(' · ');
 }
 
 function renderQueueStatus(payload, updateLabel = '实时更新') {
@@ -527,6 +527,15 @@ function renderQueueStatus(payload, updateLabel = '实时更新') {
     const stock = payload.stock;
     if (!stock) throw new Error('库存不可用');
     setQueueMessage(getStockLabel(stock), { state: 'clear', detail: '本地凭证库存等级，仅供参考，不预留库存，不代表卡密充值资格' });
+    const partial = Object.values(stock).length === 0 || ['plus', 'plus_year', 'pro5x', 'pro20x'].some(key => getStockLevel(stock[key]) === '暂不可用');
+    $('#queue-status').dataset.state = partial ? 'partial' : 'clear';
+    const label = $('#queue-live-label');
+    label.replaceChildren(...getStockLabel(stock).split(' · ').map((text, index) => {
+      const item = document.createElement('span');
+      item.className = 'stock-item';
+      item.textContent = (index ? ' · ' : '') + text;
+      return item;
+    }));
     return;
   }
   const queue = getQueueDisplay(getQueueCount(payload));
@@ -626,6 +635,11 @@ function updateChannelInterface() {
   });
   $('#card-key-note').textContent = channel.cardNote;
   $('#batch-limit-note').textContent = channel.recordsNote;
+  $('#batch-keys').placeholder = `每行输入一个卡密，最多 ${channel.id === 'advanced' ? 50 : 100} 个`;
+  $('#batch-title').textContent = channel.id === 'advanced' ? '卡密与充值结果查询' : '批量查询充值记录';
+  $('#batch-results-title').textContent = channel.id === 'advanced' ? '卡密与充值结果' : '充值记录查询结果';
+  $('#quick-task-query').textContent = channel.id === 'advanced' ? '卡密与结果查询' : '任务查询';
+  $('#queue-status').setAttribute('aria-label', channel.id === 'advanced' ? '库存状态' : '实时服务队列');
   $('#quick-refresh-cdk').classList.toggle('hidden', !channel.supportsRefresh);
   $('#quick-cancel-task').classList.toggle('hidden', !channel.supportsCancel);
   $('#refresh-cdk-btn').classList.toggle('hidden', !channel.supportsRefresh || state.refreshRemaining < 1);
@@ -1081,7 +1095,8 @@ function resetRecharge() {
 function getTaskStatus(task) {
   if (task?.advanced && task.status_label) {
     const terminal = ['completed', 'failed', 'active', 'not_found'].includes(task.task_status);
-    return { kind: task.task_status === 'completed' ? 'completed' : task.task_status === 'failed' ? 'failed' : task.task_status === 'active' || task.task_status === 'not_found' ? 'missing' : 'processing', label: task.status_label, terminal };
+    const kinds = { completed: 'completed', failed: 'failed', active: 'unused', not_found: 'missing', pending: 'processing', unconfirmed: 'unconfirmed' };
+    return { kind: kinds[task.task_status] || 'unconfirmed', label: task.status_label, terminal };
   }
   const status = String(task?.task_status || task?.status || '').trim().toLowerCase();
   if (status === 'completed') return { kind: 'completed', label: '充值已完成', terminal: true };
@@ -1361,8 +1376,10 @@ function renderTask(task) {
       ? '本次处理未完成，你可以查看原因后重新提交。'
       : '任务正在后台处理，页面会自动更新进度。';
   $('#task-id').textContent = task.task_id || state.activeTask?.taskId || '—';
+  if (task.advanced && status.kind === 'unconfirmed') $('#task-result-title').textContent = '充值结果待确认';
   $('#task-id').parentElement.classList.toggle('hidden', Boolean(task.advanced));
   if (task.advanced) $('#task-result-copy').textContent = status.kind === 'completed' ? '充值已完成，请返回 ChatGPT 核对订阅。' : '请以查询结果为准；结果未确认前请勿重复充值。需要协助请联系供应商。';
+  if (task.advanced) $('#task-result-copy').append(' 离开页面后，可在“充值记录”中输入原卡密查询结果。');
   $('#task-status').textContent = status.label;
   $('#task-account').textContent = task.account_email ? maskEmail(task.account_email) : '等待识别';
   $('#task-plan').textContent = formatRechargeType(task.plan_type || state.activeTask?.planType);
@@ -1638,14 +1655,15 @@ function renderBatchSummary(items) {
   const counts = items.reduce((summary, item) => {
     summary[getTaskStatus(item).kind] += 1;
     return summary;
-  }, { processing: 0, completed: 0, failed: 0, missing: 0 });
-  const labels = {
+  }, { unused: 0, processing: 0, completed: 0, failed: 0, unconfirmed: 0, missing: 0 });
+  const labels = isAdvancedChannel() ? { unused: '未使用', processing: '处理中', completed: '已完成', failed: '异常', unconfirmed: '待确认', missing: '未找到' } : {
     processing: '处理中',
     completed: '已完成',
     failed: '失败',
     missing: '无记录',
   };
   const summary = $('#batch-summary');
+  summary.classList.toggle('advanced-summary', isAdvancedChannel());
   summary.replaceChildren(...Object.entries(labels).map(([kind, label]) => {
     const card = document.createElement('div');
     card.className = `batch-summary-card ${kind}`;
@@ -1708,7 +1726,7 @@ function createResultMeta(item, status) {
     timeRow.append(value);
     meta.append(timeRow);
   };
-  appendTime('提交时间', item.created_at);
+  appendTime(item.advanced ? '创建时间' : '提交时间', item.created_at);
   if (item.updated_at && item.updated_at !== item.created_at) appendTime('更新时间', item.updated_at);
   if (status.kind === 'completed') appendTime('完成时间', item.completed_at);
   if (status.kind === 'failed' && item.failure_reason) {

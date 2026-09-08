@@ -325,6 +325,15 @@ textarea:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(207,111,
 .queue-status-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #8f9b96; box-shadow: 0 0 0 4px rgba(143,155,150,.1); }
 .queue-live-action { min-width: 44px; min-height: 48px; max-width: 100%; padding: 0 4px; display: inline-flex; align-items: center; overflow: hidden; border: 0; color: #40544d; background: transparent; font: 600 12px/1.4 "Noto Sans SC", sans-serif; text-align: start; text-overflow: ellipsis; white-space: nowrap; }
 .queue-live-action:disabled { opacity: 1; cursor: default; }
+body[data-recharge-channel="advanced"] .queue-live-action { flex-wrap: wrap; white-space: normal; overflow: visible; row-gap: 4px; padding-block: 8px; }
+.stock-item { white-space: nowrap; }
+.queue-console[data-state="partial"] .queue-status-dot { background: var(--text-muted); box-shadow: none; }
+.batch-summary.advanced-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.batch-status.unconfirmed, .batch-summary-card.unconfirmed { color: var(--accent-text); }
+.batch-status.unused, .batch-summary-card.unused { color: var(--text-secondary); }
+@media (max-width: 600px) {
+  .batch-summary.advanced-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .queue-live-action:not(:disabled) { color: #a24f3c; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .queue-live-action:not(:disabled):hover { color: #7f392c; }
 .queue-live-action:focus-visible { border-radius: 5px; }
