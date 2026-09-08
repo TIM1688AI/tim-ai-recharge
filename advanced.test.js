@@ -2,6 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { validCode, supplierCode, taskResult, handle, createSubmissionGuard } = require('./advanced');
 
+test('stock grades cover boundaries and never treat unavailable data as empty', () => {
+  const { getStockLevel, getStockLabel } = require('./app');
+  for (const [count, label] of [[0, '无'], [1, '低'], [5, '低'], [6, '中'], [15, '中'], [16, '高']]) assert.equal(getStockLevel(count), label);
+  for (const invalid of [undefined, null, -1, NaN, '5', true, 1.5]) assert.equal(getStockLevel(invalid), '暂不可用');
+  assert.equal(getStockLabel({ plus: 49, plus_year: 0, pro5x: 17, pro20x: 0 }), '月Plus：高 / 年Plus：无 / 月5X Pro：高 / 月20X Pro：无');
+});
+
 test('advanced formats and conservative status mapping', () => {
   for (const tier of ['', '5X', '20X']) assert.equal(supplierCode(`TIM${tier}-ABCDEFGHIJK`), `JZ${tier}-ABCDEFGHIJK`);
   assert.equal(supplierCode('ABCD1234EFGH5678'), 'ABCD1234EFGH5678');

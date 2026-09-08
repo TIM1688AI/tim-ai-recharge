@@ -7,7 +7,7 @@ const CONFIG = {
   queuePollInterval: 15000,
   channels: Object.freeze({
     regular: Object.freeze({ id: 'regular', label: '常规充值', supportsRefresh: true, supportsCancel: true, supportsQueueEvents: true, allowsActiveSubscription: false, taskPollSchedule: [5000], cardNote: '常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。', recordsNote: '查询常规充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
-    advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [10000, 15000, 30000], cardNote: '进阶充值：支持 TIM 系列及 16 位年度卡密。已有会员须通过资格检查，Team 账号暂不支持。', recordsNote: '查询卡密与充值结果；单次最多 50 个，已使用不等于充值成功' }),
+    advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [10000, 15000, 30000], cardNote: '进阶充值：支持 TIM 系列卡密，已有会员确认后可覆盖充值，Team 暂不支持。', recordsNote: '查询卡密与充值结果；单次最多 50 个，已使用不等于充值成功' }),
   }),
 };
 
@@ -512,11 +512,21 @@ function setQueueMessage(message, { state = 'loading', retry = false, detail = '
   section.classList.remove('hidden');
 }
 
+function getStockLevel(value) {
+  if (!Number.isSafeInteger(value) || value < 0) return '暂不可用';
+  return value === 0 ? '无' : value <= 5 ? '低' : value <= 15 ? '中' : '高';
+}
+
+function getStockLabel(stock) {
+  return [['plus', '月Plus'], ['plus_year', '年Plus'], ['pro5x', '月5X Pro'], ['pro20x', '月20X Pro']]
+    .map(([key, label]) => `${label}：${getStockLevel(stock?.[key])}`).join(' / ');
+}
+
 function renderQueueStatus(payload, updateLabel = '实时更新') {
   if (isAdvancedChannel()) {
     const stock = payload.stock;
-    if (!stock || !['plus', 'plus_year', 'pro5x', 'pro20x'].every(k => Number.isSafeInteger(stock[k]) && stock[k] >= 0)) throw new Error('库存不可用');
-    setQueueMessage(`库存参考：月度 ${stock.plus} · 年度 ${stock.plus_year} · 5X ${stock.pro5x} · 20X ${stock.pro20x}`, { state: 'clear', detail: '本地凭证库存，不预留库存，不代表卡密充值资格' });
+    if (!stock) throw new Error('库存不可用');
+    setQueueMessage(getStockLabel(stock), { state: 'clear', detail: '本地凭证库存等级，仅供参考，不预留库存，不代表卡密充值资格' });
     return;
   }
   const queue = getQueueDisplay(getQueueCount(payload));
@@ -1961,6 +1971,8 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    getStockLevel,
+    getStockLabel,
     buildCreateTaskPayload,
     formatDateTime,
     formatRechargeType,
