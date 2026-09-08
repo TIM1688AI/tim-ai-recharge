@@ -402,12 +402,25 @@ function maskKey(value) {
   return `${key.slice(0, 4)}••••••${key.slice(-4)}`;
 }
 
+function getRechargeLink(search, hash = '') {
+  const query = new URLSearchParams(String(search || ''));
+  const fragment = new URLSearchParams(String(hash || '').replace(/^#/, ''));
+  // Keep channel and card from the same source when both are supplied.
+  const source = isPlausibleKey(normalizeKey(query.get('card'))) ? query : fragment;
+  const requested = source.get('channel');
+  const channel = Object.hasOwn(CONFIG.channels, requested) ? requested : 'regular';
+  return { channel, cardKey: normalizeChannelKey(getCardKeyFromUrl(search, hash), channel) };
+}
+
 function prefillCardKeyFromUrl() {
-  const cardKey = getCardKeyFromUrl(location.search, location.hash);
+  const { cardKey, channel } = getRechargeLink(location.search, location.hash);
   if (!cardKey) return;
+  state.activeChannel = channel;
+  updateChannelInterface();
   $('#card-key').value = cardKey;
   const params = new URLSearchParams(location.search);
   params.delete('card');
+  params.delete('channel');
   const query = params.toString();
   const fragmentHasCard = new URLSearchParams(location.hash.replace(/^#/, '')).has('card');
   const nextHash = fragmentHasCard ? '#recharge' : location.hash;
@@ -474,8 +487,12 @@ function getQueueDisplay(value) {
 }
 
 function getQueueCount(payload) {
-  const pendingCount = Number(payload?.pending_count);
-  if (!Number.isFinite(pendingCount) || pendingCount < 0) throw new Error('队列状态不可用');
+  const raw = payload?.pending_count;
+  if (typeof raw !== 'number' && !(typeof raw === 'string' && /^\d+$/.test(raw.trim()))) {
+    throw new Error('队列状态不可用');
+  }
+  const pendingCount = Number(raw);
+  if (!Number.isSafeInteger(pendingCount) || pendingCount < 0) throw new Error('队列状态不可用');
   return pendingCount;
 }
 
@@ -1500,12 +1517,18 @@ async function cancelActiveTask() {
   }
 }
 
-function parseBatchKeys() {
-  const separator = isAdvancedChannel() ? /[\r\n,，;；]+/ : /[\s,，;；]+/;
-  return [...new Set($('#batch-keys').value
+function parseBatchKeyText(text, channel = state.activeChannel) {
+  const separator = isAdvancedChannel(channel)
+    ? /[\r\n,，;；]+|\s+(?=TIM(?:5X|20X)?-)/i
+    : /[\s,，;；]+/;
+  return [...new Set(String(text || '')
     .split(separator)
-    .map((key) => normalizeChannelKey(key))
+    .map((key) => normalizeChannelKey(key, channel))
     .filter(Boolean))];
+}
+
+function parseBatchKeys() {
+  return parseBatchKeyText($('#batch-keys').value);
 }
 
 function updateBatchControls() {
@@ -1888,6 +1911,8 @@ if (typeof module !== 'undefined' && module.exports) {
     formatDateTime,
     formatRechargeType,
     getCardKeyFromUrl,
+    getRechargeLink,
+    parseBatchKeyText,
     getQueueCount,
     getQueueDisplay,
     getQueueErrorDisplay,

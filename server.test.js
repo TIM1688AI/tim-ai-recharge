@@ -25,6 +25,8 @@ const {
   formatDateTime,
   formatRechargeType,
   getCardKeyFromUrl,
+  getRechargeLink,
+  parseBatchKeyText,
   getQueueCount,
   getQueueDisplay,
   getQueueErrorDisplay,
@@ -96,8 +98,8 @@ test('advanced channel keeps its own public routes, omits API key, and maps subs
   assert.equal(routes.has('/api-proxy/advanced/queue-events'), false);
   assert.equal(routes.get('/api-proxy/regular/queue-events').sse, true);
   assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'recharge/check-subscription' }, { token_input: SESSION }), { session: SESSION });
-  assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'recharge/verify-cdk' }, { cdk_code: ' tim-abcde fghijk ' }), { cdk_code: 'LZ-ABCDEFGHIJK' });
-  assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'lookup/tasks' }, { codes: [' tim-abcde fghijk '] }), { codes: ['LZ-ABCDEFGHIJK'] });
+  assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'recharge/verify-cdk' }, { cdk_code: ' tim-abcde fghijk ' }), { cdk_code: 'JZ-ABCDEFGHIJK' });
+  assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'lookup/tasks' }, { codes: [' tim-abcde fghijk '] }), { codes: ['JZ-ABCDEFGHIJK'] });
   const advancedHeaders = buildUpstreamHeaders({ channel: 'advanced', method: 'POST' }, Buffer.from('{}'));
   assert.equal(advancedHeaders['X-API-Key'], undefined);
   assert.equal(advancedHeaders['Content-Type'], 'application/json');
@@ -114,15 +116,15 @@ test('card keys preserve supplier formatting and only receive boundary validatio
   assert.equal(normalizeAdvancedCdk(' tim-abcde fghijk '), ADVANCED_CDK);
   assert.equal(normalizeChannelKey(' tim-abcde fghijk ', 'advanced'), ADVANCED_CDK);
   assert.equal(isAdvancedCdkCode(' tim-abcde fghijk '), true);
-  assert.equal(isAdvancedCdkCode('LZ-WRONG'), false);
+  assert.equal(isAdvancedCdkCode('JZ-WRONG'), false);
   assert.equal(isPlausibleChannelKey(ADVANCED_CDK, 'advanced'), true);
   assert.equal(isPlausibleChannelKey(TEST_CDK, 'advanced'), false);
 });
 
 test('branded advanced cards round-trip all tiers without changing sessions or regular cards', () => {
   for (const tier of ['', '5X', '20X']) {
-    const branded = `TIM${tier}-ABTIMLZ1234`;
-    const supplier = `LZ${tier}-ABTIMLZ1234`;
+    const branded = `TIM${tier}-ABTIMJZ1234`;
+    const supplier = `JZ${tier}-ABTIMJZ1234`;
     assert.equal(isPlausibleChannelKey(branded, 'advanced'), true);
     assert.equal(toSupplierCdk(branded.toLowerCase()), supplier);
     const payload = { cdk_code: branded, session_json: SESSION };
@@ -136,13 +138,14 @@ test('branded advanced cards round-trip all tiers without changing sessions or r
     assert.equal(mergeTaskResults([branded], result.tasks, 'advanced')[0].task_id, 'opaque-123');
     assert.deepEqual(buildUpstreamPayload({ channel: 'regular', upstreamPath: 'recharge/create-task' }, payload), payload);
   }
-  assert.equal(isAdvancedCdkCode('LZ-ABCDEFGHIJK'), false);
+  assert.equal(isAdvancedCdkCode('JZ-ABCDEFGHIJK'), false);
   assert.equal(isAdvancedCdkCode(['TIM-ABCDEFGHIJK']), false);
   assert.throws(() => toSupplierCdk('NOT-TIM-ABCDEFGHIJK'));
-  assert.equal(toPublicAdvancedPayload('XLZ-ABCDEFGHIJKL'), 'XLZ-ABCDEFGHIJKL');
+  assert.equal(toPublicAdvancedPayload('XJZ-ABCDEFGHIJKL'), 'XJZ-ABCDEFGHIJKL');
+  assert.equal(toPublicAdvancedPayload('LZ-ABCDEFGHIJK'), 'LZ-ABCDEFGHIJK');
   assert.equal(toPublicAdvancedPayload(null), null);
   const fs = require('node:fs');
-  assert.doesNotMatch(fs.readFileSync(require('node:path').join(__dirname, 'app.js'), 'utf8'), /LZ5X|LZ20X|LZ-/);
+  assert.doesNotMatch(fs.readFileSync(require('node:path').join(__dirname, 'app.js'), 'utf8'), /(?:LZ|JZ)(?:5X|20X)?-/);
 });
 
 test('card links prefill flexible valid keys without changing case', () => {
@@ -151,6 +154,31 @@ test('card links prefill flexible valid keys without changing case', () => {
   assert.equal(getCardKeyFromUrl('?source=customer', `#card=${encodeURIComponent(SECOND_CDK)}`), SECOND_CDK);
   assert.equal(getCardKeyFromUrl('?source=customer&card=abc'), '');
   assert.equal(getCardKeyFromUrl(''), '');
+});
+
+test('advanced link, batch input and queue edge cases', () => {
+  assert.deepEqual(getRechargeLink('', '#channel=advanced&card=tim-ABCDEFGHIJK'), { channel: 'advanced', cardKey: 'TIM-ABCDEFGHIJK' });
+  assert.equal(getRechargeLink('?card=TIM-ABCDEFGHIJK', '#channel=advanced').channel, 'regular');
+  assert.equal(getRechargeLink('', '#channel=unknown&card=TIM-ABCDEFGHIJK').channel, 'regular');
+  assert.deepEqual(parseBatchKeyText('tim-abcde fghijk TIM5X-ABCDEFGHIJK\nTIM20X-ABCDEFGHIJK，TIM-ABCDEFGHIJK', 'advanced'), ['TIM-ABCDEFGHIJK', 'TIM5X-ABCDEFGHIJK', 'TIM20X-ABCDEFGHIJK']);
+  assert.deepEqual(parseBatchKeyText('Abcd Efgh', 'regular'), ['Abcd', 'Efgh']);
+  for (const pending_count of [null, undefined, '', ' ', true, false, -1, 1.5, [], {}, Infinity]) {
+    assert.throws(() => getQueueCount({ pending_count }));
+  }
+  assert.equal(getQueueCount({ pending_count: '0' }), 0);
+});
+
+test('response mapping preserves identity fields and adapts display messages', () => {
+  const input = { task: { cdk_code: 'JZ-ABCDEFGHIJK', account_email: 'JZ-ABCDEFGHIJK@example.com', task_id: 'JZ-ABCDEFGHIJK-extra' }, error: '仅支持 JZ5X- 卡密', message: 'JZ20X-ABCDEFGHIJK 已提交', failure_reason: '请检查 JZ- 卡密', unknown: 'JZ-ABCDEFGHIJK' };
+  const result = toPublicAdvancedPayload(input);
+  assert.equal(result.task.cdk_code, 'TIM-ABCDEFGHIJK');
+  assert.equal(result.task.account_email, input.task.account_email);
+  assert.equal(result.task.task_id, input.task.task_id);
+  assert.equal(result.unknown, input.unknown);
+  assert.equal(result.error, '仅支持 TIM5X- 卡密');
+  assert.equal(result.message, 'TIM20X-ABCDEFGHIJK 已提交');
+  assert.equal(result.failure_reason, '请检查 TIM- 卡密');
+  assert.equal(input.task.cdk_code, 'JZ-ABCDEFGHIJK');
 });
 
 test('Session parser identifies account and creates the new task payload', () => {
@@ -204,10 +232,10 @@ test('batch results keep input order and mark omitted tasks as no record', () =>
   assert.equal(results[1].task_status, 'not_found');
   const advancedResults = mergeTaskResults([' tim-abcde fghijk '], [{
     cdk_code: ADVANCED_CDK,
-    task_id: 'LZ-TASK-001',
+    task_id: 'JZ-TASK-001',
     task_status: 'completed',
   }], 'advanced');
-  assert.equal(advancedResults[0].task_id, 'LZ-TASK-001');
+  assert.equal(advancedResults[0].task_id, 'JZ-TASK-001');
 });
 
 test('global queue display and China time formatting match the new API', () => {

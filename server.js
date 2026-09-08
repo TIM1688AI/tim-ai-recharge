@@ -261,17 +261,23 @@ function isAdvancedCdkCode(value) {
 
 function toSupplierCdk(value) {
   if (!isAdvancedCdkCode(value)) throw new Error('进阶卡密格式不正确');
-  return normalizeAdvancedCdk(value).replace(/^TIM(5X|20X)?-/, 'LZ$1-');
+  return normalizeAdvancedCdk(value).replace(/^TIM(5X|20X)?-/, 'JZ$1-');
 }
 
-// Convert only card fields and card-shaped tokens; opaque task IDs remain intact.
-function toPublicAdvancedPayload(value) {
+// Only documented card fields and user-facing messages are adapted.
+function toPublicAdvancedPayload(value, field = '') {
   if (typeof value === 'string') {
-    return value.replace(/\bLZ(5X|20X)?-([A-Z0-9]{11})\b/gi, (_, tier = '', suffix) => `TIM${tier.toUpperCase()}-${suffix.toUpperCase()}`);
+    if (['cdk_code', 'new_code'].includes(field)) {
+      return value.replace(/^JZ(5X|20X)?-([A-Z0-9]{11})$/i, (_, tier = '', suffix) => `TIM${tier.toUpperCase()}-${suffix.toUpperCase()}`);
+    }
+    if (['error', 'message', 'failure_reason'].includes(field)) {
+      return value.replace(/\bJZ(5X|20X)?-/gi, (_, tier = '') => `TIM${tier.toUpperCase()}-`);
+    }
+    return value;
   }
-  if (Array.isArray(value)) return value.map(toPublicAdvancedPayload);
+  if (Array.isArray(value)) return value.map((item) => toPublicAdvancedPayload(item, field));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, toPublicAdvancedPayload(item)]));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, toPublicAdvancedPayload(item, key)]));
   }
   return value;
 }
