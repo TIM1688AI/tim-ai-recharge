@@ -327,6 +327,9 @@ textarea:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(207,111,
 .queue-live-action:disabled { opacity: 1; cursor: default; }
 body[data-recharge-channel="advanced"] .queue-live-action { flex-wrap: wrap; white-space: normal; overflow: visible; row-gap: 4px; padding-block: 8px; }
 .stock-item { white-space: nowrap; }
+.queue-live-action.stock-layout { flex: 1; width: 100%; padding-inline: 0; column-gap: 8px; }
+.stock-layout > span:first-child { white-space: nowrap; }
+.stock-levels { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; margin-inline-start: auto; }
 .queue-console[data-state="partial"] .queue-status-dot { background: var(--text-muted); box-shadow: none; }
 .batch-summary.advanced-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .batch-status.unconfirmed, .batch-summary-card.unconfirmed { color: var(--accent-text); }

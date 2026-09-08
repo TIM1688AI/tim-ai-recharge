@@ -6,7 +6,7 @@ test('stock grades cover boundaries and never treat unavailable data as empty', 
   const { getStockLevel, getStockLabel } = require('./app');
   for (const [count, label] of [[0, '无'], [1, '低'], [5, '低'], [6, '中'], [15, '中'], [16, '高']]) assert.equal(getStockLevel(count), label);
   for (const invalid of [undefined, null, -1, NaN, '5', true, 1.5]) assert.equal(getStockLevel(invalid), '暂不可用');
-  assert.equal(getStockLabel({ plus: 49, plus_year: 0, pro5x: 17, pro20x: 0 }), '库存状态：月Plus：高 · 年Plus：无 · 月5X Pro：高 · 月20X Pro：无');
+  assert.equal(getStockLabel({ plus: 49, plus_year: 0, pro5x: 17, pro20x: 0 }), '库存状态：Plus：高 · 年Plus：无 · 5X Pro：高 · 20X Pro：无');
 });
 
 test('advanced display distinguishes unused, missing and uncertain results', () => {

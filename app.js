@@ -506,6 +506,7 @@ function setQueueMessage(message, { state = 'loading', retry = false, detail = '
   const section = $('#queue-status');
   const liveAction = $('#queue-live-label');
   liveAction.textContent = message;
+  liveAction.classList.remove('stock-layout');
   liveAction.disabled = !retry;
   liveAction.setAttribute('aria-label', detail ? `${message}，${detail}` : message);
   section.dataset.state = state;
@@ -518,7 +519,7 @@ function getStockLevel(value) {
 }
 
 function getStockLabel(stock) {
-  return '库存状态：' + [['plus', '月Plus'], ['plus_year', '年Plus'], ['pro5x', '月5X Pro'], ['pro20x', '月20X Pro']]
+  return '库存状态：' + [['plus', 'Plus'], ['plus_year', '年Plus'], ['pro5x', '5X Pro'], ['pro20x', '20X Pro']]
     .map(([key, label]) => `${label}：${getStockLevel(stock?.[key])}`).join(' · ');
 }
 
@@ -530,12 +531,18 @@ function renderQueueStatus(payload, updateLabel = '实时更新') {
     const partial = Object.values(stock).length === 0 || ['plus', 'plus_year', 'pro5x', 'pro20x'].some(key => getStockLevel(stock[key]) === '暂不可用');
     $('#queue-status').dataset.state = partial ? 'partial' : 'clear';
     const label = $('#queue-live-label');
-    label.replaceChildren(...getStockLabel(stock).split(' · ').map((text, index) => {
+    const heading = document.createElement('span');
+    heading.textContent = '库存状态：';
+    const levels = document.createElement('span');
+    levels.className = 'stock-levels';
+    levels.append(...getStockLabel(stock).replace(/^库存状态：/, '').split(' · ').map((text, index) => {
       const item = document.createElement('span');
       item.className = 'stock-item';
       item.textContent = (index ? ' · ' : '') + text;
       return item;
     }));
+    label.replaceChildren(heading, levels);
+    label.classList.add('stock-layout');
     return;
   }
   const queue = getQueueDisplay(getQueueCount(payload));
