@@ -11,7 +11,11 @@ const {
   createUpstreamBaseUrl,
   createServer,
   enforceRateLimit,
+  isAdvancedCdkCode,
   isCdkCode,
+  normalizeAdvancedCdk,
+  toSupplierCdk,
+  toPublicAdvancedPayload,
   resetRateLimits,
   validateProductionConfig,
   validateProxyPayload,
@@ -19,19 +23,25 @@ const {
 const {
   buildCreateTaskPayload,
   formatDateTime,
+  formatRechargeType,
   getCardKeyFromUrl,
+  getQueueCount,
   getQueueDisplay,
   getQueueErrorDisplay,
+  getTaskPollDelay,
   getTaskStatus,
+  isPlausibleChannelKey,
   isPlausibleKey,
   maskKey,
   mergeTaskResults,
+  normalizeChannelKey,
   normalizeKey,
   parseSessionJsonValue,
 } = require('./app');
 
 const TEST_CDK = 'TIM-Ai_2026-X7p9';
 const SECOND_CDK = 'SHORT-123456';
+const ADVANCED_CDK = 'TIM-ABCDEFGHIJK';
 const SESSION = JSON.stringify({
   accessToken: 'eyJ-test-token',
   sessionToken: 'session-cookie-token',
@@ -83,7 +93,11 @@ test('advanced channel keeps its own public routes, omits API key, and maps subs
   assert.equal(routes.get('/api-proxy/regular/verify-cdk').channel, 'regular');
   assert.equal(routes.get('/api-proxy/advanced/verify-cdk').channel, 'advanced');
   assert.equal(routes.has('/api-proxy/advanced/refresh-cdk'), false);
+  assert.equal(routes.has('/api-proxy/advanced/queue-events'), false);
+  assert.equal(routes.get('/api-proxy/regular/queue-events').sse, true);
   assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'recharge/check-subscription' }, { token_input: SESSION }), { session: SESSION });
+  assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'recharge/verify-cdk' }, { cdk_code: ' tim-abcde fghijk ' }), { cdk_code: 'LZ-ABCDEFGHIJK' });
+  assert.deepEqual(buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'lookup/tasks' }, { codes: [' tim-abcde fghijk '] }), { codes: ['LZ-ABCDEFGHIJK'] });
   const advancedHeaders = buildUpstreamHeaders({ channel: 'advanced', method: 'POST' }, Buffer.from('{}'));
   assert.equal(advancedHeaders['X-API-Key'], undefined);
   assert.equal(advancedHeaders['Content-Type'], 'application/json');
@@ -97,6 +111,38 @@ test('card keys preserve supplier formatting and only receive boundary validatio
   assert.equal(isPlausibleKey('A'.repeat(129)), false);
   assert.equal(isCdkCode(TEST_CDK), true);
   assert.equal(maskKey(TEST_CDK), 'TIM-••••••X7p9');
+  assert.equal(normalizeAdvancedCdk(' tim-abcde fghijk '), ADVANCED_CDK);
+  assert.equal(normalizeChannelKey(' tim-abcde fghijk ', 'advanced'), ADVANCED_CDK);
+  assert.equal(isAdvancedCdkCode(' tim-abcde fghijk '), true);
+  assert.equal(isAdvancedCdkCode('LZ-WRONG'), false);
+  assert.equal(isPlausibleChannelKey(ADVANCED_CDK, 'advanced'), true);
+  assert.equal(isPlausibleChannelKey(TEST_CDK, 'advanced'), false);
+});
+
+test('branded advanced cards round-trip all tiers without changing sessions or regular cards', () => {
+  for (const tier of ['', '5X', '20X']) {
+    const branded = `TIM${tier}-ABTIMLZ1234`;
+    const supplier = `LZ${tier}-ABTIMLZ1234`;
+    assert.equal(isPlausibleChannelKey(branded, 'advanced'), true);
+    assert.equal(toSupplierCdk(branded.toLowerCase()), supplier);
+    const payload = { cdk_code: branded, session_json: SESSION };
+    const upstream = buildUpstreamPayload({ channel: 'advanced', upstreamPath: 'recharge/create-task' }, payload);
+    assert.deepEqual(upstream, { cdk_code: supplier, session_json: SESSION });
+    assert.equal(payload.cdk_code, branded);
+    const result = toPublicAdvancedPayload({ tasks: [{ cdk_code: supplier, task_id: 'opaque-123', plan_type: 'plus' }], error: `卡密 ${supplier} 已使用` });
+    assert.equal(result.tasks[0].cdk_code, branded);
+    assert.equal(result.tasks[0].task_id, 'opaque-123');
+    assert.equal(result.error, `卡密 ${branded} 已使用`);
+    assert.equal(mergeTaskResults([branded], result.tasks, 'advanced')[0].task_id, 'opaque-123');
+    assert.deepEqual(buildUpstreamPayload({ channel: 'regular', upstreamPath: 'recharge/create-task' }, payload), payload);
+  }
+  assert.equal(isAdvancedCdkCode('LZ-ABCDEFGHIJK'), false);
+  assert.equal(isAdvancedCdkCode(['TIM-ABCDEFGHIJK']), false);
+  assert.throws(() => toSupplierCdk('NOT-TIM-ABCDEFGHIJK'));
+  assert.equal(toPublicAdvancedPayload('XLZ-ABCDEFGHIJKL'), 'XLZ-ABCDEFGHIJKL');
+  assert.equal(toPublicAdvancedPayload(null), null);
+  const fs = require('node:fs');
+  assert.doesNotMatch(fs.readFileSync(require('node:path').join(__dirname, 'app.js'), 'utf8'), /LZ5X|LZ20X|LZ-/);
 });
 
 test('card links prefill flexible valid keys without changing case', () => {
@@ -138,6 +184,13 @@ test('task statuses distinguish progress, completion, failure, and no record', (
   assert.equal(getTaskStatus({ task_status: 'failed' }).kind, 'failed');
   assert.equal(getTaskStatus({ task_status: 'paying' }).kind, 'processing');
   assert.equal(getTaskStatus({ task_status: 'not_found' }).kind, 'missing');
+  assert.equal(formatRechargeType('plus'), 'ChatGPT Plus');
+  assert.equal(formatRechargeType('5x'), 'ChatGPT Pro 5×');
+  assert.equal(formatRechargeType('20x'), 'ChatGPT Pro 20×');
+  assert.equal(getTaskPollDelay('regular', 4), 5000);
+  assert.equal(getTaskPollDelay('advanced', 0), 10000);
+  assert.equal(getTaskPollDelay('advanced', 1), 15000);
+  assert.equal(getTaskPollDelay('advanced', 9), 30000);
 });
 
 test('batch results keep input order and mark omitted tasks as no record', () => {
@@ -149,9 +202,18 @@ test('batch results keep input order and mark omitted tasks as no record', () =>
   assert.equal(results[0].task_id, 'TASK-001');
   assert.equal(results[1].cdk_code, SECOND_CDK);
   assert.equal(results[1].task_status, 'not_found');
+  const advancedResults = mergeTaskResults([' tim-abcde fghijk '], [{
+    cdk_code: ADVANCED_CDK,
+    task_id: 'LZ-TASK-001',
+    task_status: 'completed',
+  }], 'advanced');
+  assert.equal(advancedResults[0].task_id, 'LZ-TASK-001');
 });
 
 test('global queue display and China time formatting match the new API', () => {
+  assert.equal(getQueueCount({ pending_count: 0, stock: { total: 0 } }), 0);
+  assert.equal(getQueueCount({ pending_count: '3' }), 3);
+  assert.throws(() => getQueueCount({ status: 'ok' }), /队列状态不可用/);
   assert.deepEqual(getQueueDisplay(3), { count: 3, message: '队列 3 个任务' });
   assert.deepEqual(getQueueDisplay(0), { count: 0, message: '队列空闲' });
   assert.deepEqual(getQueueErrorDisplay(), {
@@ -228,6 +290,8 @@ test('proxy rejects malformed input before upstream forwarding', () => {
   assert.match(validateProxyPayload('lookup/tasks', { codes: [] }), /1–100/);
   assert.match(validateProxyPayload('lookup/tasks', { codes: ['A'.repeat(129)] }), /格式或长度/);
   assert.match(validateProxyPayload('lookup/tasks', { codes: ['ABCD\nEFGH'] }), /格式或长度/);
+  assert.equal(validateProxyPayload({ channel: 'advanced', upstreamPath: 'recharge/verify-cdk' }, { cdk_code: ' tim-abcde fghijk ' }), null);
+  assert.match(validateProxyPayload({ channel: 'advanced', upstreamPath: 'recharge/verify-cdk' }, { cdk_code: TEST_CDK }), /cdk_code/);
 });
 
 test('HTTP boundary enforces methods, content type, static allowlist, and rate limits', async (t) => {

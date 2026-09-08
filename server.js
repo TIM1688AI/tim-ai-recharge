@@ -46,10 +46,10 @@ const routeDefinitions = Object.freeze([
   ['create-task', { method: 'POST', upstreamPath: 'recharge/create-task' }],
   ['check-subscription', { method: 'POST', upstreamPath: 'recharge/check-subscription' }],
   ['queue-status', { method: 'GET', upstreamPath: 'recharge/queue-status' }],
-  ['queue-events', { method: 'GET', upstreamPath: 'recharge/queue-events', sse: true }],
   ['lookup/tasks', { method: 'POST', upstreamPath: 'lookup/tasks' }],
 ]);
 const regularOnlyRouteDefinitions = Object.freeze([
+  ['queue-events', { method: 'GET', upstreamPath: 'recharge/queue-events', sse: true }],
   ['refresh-cdk', { method: 'POST', upstreamPath: 'recharge/refresh-cdk' }],
   ['cancel-task', { method: 'POST', upstreamPath: 'recharge/cancel-task' }],
 ]);
@@ -250,6 +250,32 @@ function isCdkCode(value) {
     && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
+function normalizeAdvancedCdk(value) {
+  return String(value || '').replace(/\s+/g, '').toUpperCase();
+}
+
+function isAdvancedCdkCode(value) {
+  return typeof value === 'string' && value.length <= 128
+    && /^(?:TIM|TIM5X|TIM20X)-[A-Z0-9]{11}$/.test(normalizeAdvancedCdk(value));
+}
+
+function toSupplierCdk(value) {
+  if (!isAdvancedCdkCode(value)) throw new Error('进阶卡密格式不正确');
+  return normalizeAdvancedCdk(value).replace(/^TIM(5X|20X)?-/, 'LZ$1-');
+}
+
+// Convert only card fields and card-shaped tokens; opaque task IDs remain intact.
+function toPublicAdvancedPayload(value) {
+  if (typeof value === 'string') {
+    return value.replace(/\bLZ(5X|20X)?-([A-Z0-9]{11})\b/gi, (_, tier = '', suffix) => `TIM${tier.toUpperCase()}-${suffix.toUpperCase()}`);
+  }
+  if (Array.isArray(value)) return value.map(toPublicAdvancedPayload);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, toPublicAdvancedPayload(item)]));
+  }
+  return value;
+}
+
 function parseSessionJson(value) {
   if (typeof value !== 'string' || !value || value.length > 256 * 1024) return null;
   try {
@@ -265,13 +291,14 @@ function validateProxyPayload(routeOrPath, payload) {
     ? { upstreamPath: routeOrPath, channel: 'regular' }
     : routeOrPath;
   const upstreamPath = route?.upstreamPath;
+  const acceptsCdk = route?.channel === 'advanced' ? isAdvancedCdkCode : isCdkCode;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '请求体必须是 JSON 对象';
 
   if (['recharge/verify-cdk', 'recharge/refresh-cdk', 'recharge/cancel-task'].includes(upstreamPath)) {
-    return isCdkCode(payload.cdk_code) ? null : 'cdk_code 格式或长度不正确';
+    return acceptsCdk(payload.cdk_code) ? null : 'cdk_code 格式或长度不正确';
   }
   if (upstreamPath === 'recharge/create-task') {
-    if (!isCdkCode(payload.cdk_code)) return 'cdk_code 格式或长度不正确';
+    if (!acceptsCdk(payload.cdk_code)) return 'cdk_code 格式或长度不正确';
     const session = parseSessionJson(payload.session_json);
     if (!session) return 'session_json 不是有效的 JSON 对象或内容过大';
     const token = session.accessToken || session.access_token;
@@ -293,7 +320,7 @@ function validateProxyPayload(routeOrPath, payload) {
     if (!Array.isArray(payload.codes) || payload.codes.length < 1 || payload.codes.length > 100) {
       return 'codes 数量必须为 1–100 个';
     }
-    return payload.codes.every(isCdkCode)
+    return payload.codes.every(acceptsCdk)
       ? null
       : 'codes 中存在格式或长度错误的卡密';
   }
@@ -301,8 +328,16 @@ function validateProxyPayload(routeOrPath, payload) {
 }
 
 function buildUpstreamPayload(route, payload) {
-  if (route.channel === 'advanced' && route.upstreamPath === 'recharge/check-subscription') {
-    return { session: payload.token_input };
+  if (route.channel === 'advanced') {
+    if (route.upstreamPath === 'recharge/check-subscription') {
+      return { session: payload.token_input };
+    }
+    if (typeof payload.cdk_code === 'string') {
+      return { ...payload, cdk_code: toSupplierCdk(payload.cdk_code) };
+    }
+    if (Array.isArray(payload.codes)) {
+      return { ...payload, codes: payload.codes.map(toSupplierCdk) };
+    }
   }
   return payload;
 }
@@ -375,7 +410,16 @@ function forwardUpstream(request, response, route, body) {
     });
     upstreamResponse.on('end', () => {
       if (exceeded || response.writableEnded || response.destroyed) return;
-      const responseBody = Buffer.concat(chunks);
+      let responseBody = Buffer.concat(chunks);
+      if (route.channel === 'advanced') {
+        try {
+          responseBody = Buffer.from(JSON.stringify(toPublicAdvancedPayload(JSON.parse(responseBody.toString('utf8')))));
+          responseHeaders['Content-Type'] = 'application/json; charset=utf-8';
+        } catch {
+          sendJson(response, 502, { code: 'upstream_invalid_response', error: '充值服务返回异常，请稍后重试' });
+          return;
+        }
+      }
       responseHeaders['Content-Length'] = responseBody.length;
       response.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
       response.end(responseBody);
@@ -576,7 +620,11 @@ module.exports = {
   createServer,
   enforceRateLimit,
   getProvider,
+  isAdvancedCdkCode,
   isCdkCode,
+  normalizeAdvancedCdk,
+  toSupplierCdk,
+  toPublicAdvancedPayload,
   resetRateLimits: () => rateLimitBuckets.clear(),
   validateProductionConfig,
   validateProxyPayload,

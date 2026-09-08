@@ -6,8 +6,8 @@ const CONFIG = {
   taskPollInterval: 5000,
   queuePollInterval: 15000,
   channels: Object.freeze({
-    regular: Object.freeze({ id: 'regular', label: '常规充值', supportsRefresh: true, supportsCancel: true, allowsActiveSubscription: false, cardNote: '常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。', recordsNote: '查询常规充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
-    advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, allowsActiveSubscription: true, cardNote: '进阶充值：已有 Plus / Pro 账号可继续提交，Team 账号暂不支持。', recordsNote: '查询进阶充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
+    regular: Object.freeze({ id: 'regular', label: '常规充值', supportsRefresh: true, supportsCancel: true, supportsQueueEvents: true, allowsActiveSubscription: false, taskPollSchedule: [5000], cardNote: '常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。', recordsNote: '查询常规充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
+    advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [10000, 15000, 30000], cardNote: '进阶充值：已有 Plus / Pro 账号可继续提交，Team 账号暂不支持。', recordsNote: '查询进阶充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
   }),
 };
 
@@ -19,6 +19,7 @@ const state = {
   pendingRedeemSession: null,
   activeTask: null,
   taskPollTimer: null,
+  taskPollAttempt: 0,
   taskGeneration: 0,
   queueEventSource: null,
   queuePollTimer: null,
@@ -42,6 +43,12 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 function getChannel(channelId = state.activeChannel) {
   return CONFIG.channels[channelId] || CONFIG.channels.regular;
+}
+
+function getTaskPollDelay(channelId = state.activeTask?.channel || state.activeChannel, attempt = state.taskPollAttempt) {
+  const schedule = getChannel(channelId).taskPollSchedule || [CONFIG.taskPollInterval];
+  const index = Math.min(Math.max(0, Math.floor(Number(attempt) || 0)), schedule.length - 1);
+  return schedule[index];
 }
 
 function isAdvancedChannel(channelId = state.activeChannel) {
@@ -364,6 +371,18 @@ function normalizeKey(value) {
   return String(value || '').trim();
 }
 
+function normalizeChannelKey(value, channelId = state.activeChannel) {
+  const key = normalizeKey(value);
+  return isAdvancedChannel(channelId) ? key.replace(/\s+/g, '').toUpperCase() : key;
+}
+
+function isPlausibleChannelKey(value, channelId = state.activeChannel) {
+  const key = normalizeChannelKey(value, channelId);
+  return isAdvancedChannel(channelId)
+    ? /^(?:TIM|TIM5X|TIM20X)-[A-Z0-9]{11}$/.test(key)
+    : isPlausibleKey(key);
+}
+
 function isPlausibleKey(value) {
   const key = normalizeKey(value);
   return key.length >= 4 && key.length <= 128 && !/[\u0000-\u001f\u007f]/.test(key);
@@ -454,6 +473,12 @@ function getQueueDisplay(value) {
   };
 }
 
+function getQueueCount(payload) {
+  const pendingCount = Number(payload?.pending_count);
+  if (!Number.isFinite(pendingCount) || pendingCount < 0) throw new Error('队列状态不可用');
+  return pendingCount;
+}
+
 function getQueueErrorDisplay() {
   return {
     message: '暂时无法获取，点击重试',
@@ -471,8 +496,7 @@ function setQueueMessage(message, { state = 'loading', retry = false, detail = '
 }
 
 function renderQueueStatus(payload, updateLabel = '实时更新') {
-  if (payload?.status !== 'ok') throw new Error('队列状态不可用');
-  const queue = getQueueDisplay(payload.pending_count);
+  const queue = getQueueDisplay(getQueueCount(payload));
   setQueueMessage(queue.message, {
     state: queue.count > 0 ? 'busy' : 'clear',
     detail: payload.at ? `更新于 ${formatDateTime(payload.at)}` : updateLabel,
@@ -526,12 +550,13 @@ function startQueuePolling({ reconnecting = false, channel = state.activeChannel
 function startQueueUpdates() {
   const channel = state.activeChannel;
   stopQueueUpdates();
-  setQueueMessage('正在获取队列状态…', { state: 'loading' });
-  loadQueueStatus(channel);
-  if (typeof EventSource === 'undefined') {
+  if (!getChannel(channel).supportsQueueEvents || typeof EventSource === 'undefined') {
     startQueuePolling({ channel });
     return;
   }
+
+  setQueueMessage('正在获取队列状态…', { state: 'loading' });
+  loadQueueStatus(channel);
 
   const source = new EventSource(`${CONFIG.proxyBase}${channelApiPath('/queue-events', channel)}`);
   state.queueEventSource = source;
@@ -674,6 +699,17 @@ function formatPlanName(value) {
     team: 'ChatGPT Team',
   };
   return names[plan.toLowerCase()] || plan;
+}
+
+function formatRechargeType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  const names = {
+    plus: 'ChatGPT Plus',
+    plus_year: 'ChatGPT Plus 年付',
+    '5x': 'ChatGPT Pro 5×',
+    '20x': 'ChatGPT Pro 20×',
+  };
+  return names[type] || (type ? String(value).trim() : '等待识别');
 }
 
 function openSubscriptionModal(summary, { canContinue = false, blockedReason = '' } = {}) {
@@ -989,6 +1025,7 @@ function stopTaskPolling() {
 
 function resetRecharge() {
   stopTaskPolling();
+  state.taskPollAttempt = 0;
   state.taskGeneration += 1;
   state.verifiedCardKey = '';
   state.verifiedPlan = '';
@@ -1000,6 +1037,8 @@ function resetRecharge() {
   $('#recharge-form').reset();
   $('#card-key').value = '';
   $('#refresh-cdk-btn').classList.add('hidden');
+  $('#verified-plan').classList.add('hidden');
+  $('#verified-plan').textContent = '';
   $('#refresh-result').classList.add('hidden');
   $('#refreshed-card-code').textContent = '';
   showStep(1);
@@ -1084,10 +1123,12 @@ async function verifyCard() {
   const button = $('#verify-btn');
   const channel = getChannel();
   if (button.disabled) return;
-  const cardKey = normalizeKey($('#card-key').value);
+  const cardKey = normalizeChannelKey($('#card-key').value, channel.id);
   $('#card-key').value = cardKey;
-  if (!isPlausibleKey(cardKey)) {
-    showToast('请输入 4–128 位有效卡密', 'error');
+  if (!isPlausibleChannelKey(cardKey, channel.id)) {
+    showToast(channel.id === 'advanced'
+      ? '请输入 TIM、TIM5X 或 TIM20X 开头的有效卡密'
+      : '请输入 4–128 位有效卡密', 'error');
     $('#card-key').focus();
     return;
   }
@@ -1112,6 +1153,14 @@ async function verifyCard() {
     }
     state.verifiedCardKey = cardKey;
     state.verifiedPlan = String(result.plan_type || '');
+    const verifiedPlan = $('#verified-plan');
+    if (state.verifiedPlan) {
+      verifiedPlan.textContent = `充值类型：${formatRechargeType(state.verifiedPlan)}`;
+      verifiedPlan.classList.remove('hidden');
+    } else {
+      verifiedPlan.textContent = '';
+      verifiedPlan.classList.add('hidden');
+    }
     state.refreshRemaining = Math.max(0, Math.floor(Number(result.refresh_remaining ?? 0) || 0));
     $('#masked-card-key').textContent = maskKey(cardKey);
     $('#refresh-cdk-btn').classList.toggle('hidden', !channel.supportsRefresh || state.refreshRemaining < 1);
@@ -1224,6 +1273,11 @@ async function refreshVerifiedCard() {
     state.refreshRemaining = Math.max(0, Math.floor(Number(result.refresh_remaining ?? 0) || 0));
     $('#card-key').value = newCode;
     $('#masked-card-key').textContent = maskKey(newCode);
+    const verifiedPlan = $('#verified-plan');
+    if (state.verifiedPlan) {
+      verifiedPlan.textContent = `充值类型：${formatRechargeType(state.verifiedPlan)}`;
+      verifiedPlan.classList.remove('hidden');
+    }
     $('#refreshed-card-code').textContent = newCode;
     $('#refresh-remaining-note').textContent = state.refreshRemaining > 0
       ? `仍可换码 ${state.refreshRemaining} 次`
@@ -1258,6 +1312,7 @@ function renderTask(task) {
   $('#task-id').textContent = task.task_id || state.activeTask?.taskId || '—';
   $('#task-status').textContent = status.label;
   $('#task-account').textContent = task.account_email ? maskEmail(task.account_email) : '等待识别';
+  $('#task-plan').textContent = formatRechargeType(task.plan_type || state.activeTask?.planType);
   $('#task-time').textContent = formatDateTime(task.completed_at || task.updated_at || task.created_at);
   const failure = $('#task-failure');
   if (status.kind === 'failed' && task.failure_reason) {
@@ -1277,6 +1332,11 @@ function activateTask(task, cardKey, { channel = state.activeChannel, cancellabl
   const previousTask = state.activeTask?.cardKey === cardKey && state.activeTask.channel === channel ? state.activeTask : null;
   const status = getTaskStatus(task);
   const taskStatus = String(task?.task_status || task?.status || '').trim().toLowerCase();
+  const previousProgress = previousTask
+    ? `${previousTask.latestTask?.task_status || previousTask.latestTask?.status || ''}:${previousTask.latestTask?.updated_at || ''}`
+    : '';
+  const currentProgress = `${taskStatus}:${task?.updated_at || ''}`;
+  if (!previousTask || previousProgress !== currentProgress) state.taskPollAttempt = 0;
   const canCancel = status.terminal || taskStatus === 'manual_review'
     ? false
     : Boolean(getChannel(channel).supportsCancel && (cancellable ?? previousTask?.cancellable));
@@ -1284,6 +1344,7 @@ function activateTask(task, cardKey, { channel = state.activeChannel, cancellabl
     channel,
     cardKey,
     taskId: task.task_id || state.activeTask?.taskId || '',
+    planType: task.plan_type || previousTask?.planType || state.verifiedPlan || '',
     cancellable: canCancel,
     latestTask: { ...task },
   };
@@ -1294,13 +1355,19 @@ function activateTask(task, cardKey, { channel = state.activeChannel, cancellabl
   $('#refresh-result').classList.add('hidden');
   $('#refreshed-card-code').textContent = '';
   renderTask(task);
-  if (status.terminal) stopTaskPolling();
-  else scheduleTaskPoll();
+  if (status.terminal) {
+    state.taskPollAttempt = 0;
+    stopTaskPolling();
+  } else {
+    scheduleTaskPoll();
+  }
 }
 
-function scheduleTaskPoll(delay = CONFIG.taskPollInterval) {
+function scheduleTaskPoll(delay) {
   stopTaskPolling();
-  state.taskPollTimer = setTimeout(() => refreshActiveTask({ silent: true }), delay);
+  const scheduledDelay = Math.max(getTaskPollDelay(), Number(delay) || 0);
+  state.taskPollAttempt += 1;
+  state.taskPollTimer = setTimeout(() => refreshActiveTask({ silent: true }), scheduledDelay);
 }
 
 async function fetchTask(cardKey, channel = state.activeTask?.channel || state.activeChannel) {
@@ -1310,8 +1377,8 @@ async function fetchTask(cardKey, channel = state.activeTask?.channel || state.a
     channel,
   });
   if (!Array.isArray(payload.tasks)) throw new Error('任务查询接口返回格式异常');
-  const normalized = normalizeKey(cardKey).toLowerCase();
-  const task = payload.tasks.find((item) => normalizeKey(item?.cdk_code).toLowerCase() === normalized);
+  const normalized = normalizeChannelKey(cardKey, channel).toLowerCase();
+  const task = payload.tasks.find((item) => normalizeChannelKey(item?.cdk_code, channel).toLowerCase() === normalized);
   if (task) return task;
   const error = new Error('暂未查询到任务记录，请稍后重试');
   error.status = 404;
@@ -1356,7 +1423,7 @@ async function refreshActiveTask({ silent = false } = {}) {
   } catch (error) {
     if (generation !== state.taskGeneration || state.activeTask?.cardKey !== cardKey) return;
     if (!silent) showToast(error.message, 'error');
-    scheduleTaskPoll(Math.max(CONFIG.taskPollInterval, (error.retryAfter || 0) * 1000));
+    scheduleTaskPoll((error.retryAfter || 0) * 1000);
   } finally {
     if (!silent) setLoading(button, false);
   }
@@ -1406,6 +1473,7 @@ async function cancelActiveTask() {
     });
     if (result.ok !== true) throw new Error(result.error || '任务未能取消');
     stopTaskPolling();
+    state.taskPollAttempt = 0;
     state.taskGeneration += 1;
     state.activeTask = null;
     state.verifiedCardKey = '';
@@ -1433,9 +1501,10 @@ async function cancelActiveTask() {
 }
 
 function parseBatchKeys() {
+  const separator = isAdvancedChannel() ? /[\r\n,，;；]+/ : /[\s,，;；]+/;
   return [...new Set($('#batch-keys').value
-    .split(/[\s,，;；]+/)
-    .map(normalizeKey)
+    .split(separator)
+    .map((key) => normalizeChannelKey(key))
     .filter(Boolean))];
 }
 
@@ -1465,18 +1534,21 @@ function maskEmail(email) {
   return `${visibleName}@${domain}`;
 }
 
-function mergeTaskResults(codes, tasks) {
+function mergeTaskResults(codes, tasks, channelId = 'regular') {
   const taskMap = new Map();
   tasks.forEach((task) => {
-    const key = normalizeKey(task.cdk_code);
+    const key = normalizeChannelKey(task.cdk_code, channelId);
     if (key) {
       taskMap.set(key, task);
       taskMap.set(key.toLowerCase(), task);
     }
   });
-  return codes.map((code) => taskMap.get(code) || taskMap.get(code.toLowerCase()) || {
-    cdk_code: code,
-    task_status: 'not_found',
+  return codes.map((code) => {
+    const normalized = normalizeChannelKey(code, channelId);
+    return taskMap.get(normalized) || taskMap.get(normalized.toLowerCase()) || {
+      cdk_code: code,
+      task_status: 'not_found',
+    };
   });
 }
 
@@ -1521,6 +1593,14 @@ function closeBatchResultsModal({ restoreFocus = true } = {}) {
 function createResultMeta(item, status) {
   const meta = document.createElement('div');
   meta.className = 'batch-result-meta';
+  if (item.plan_type) {
+    const plan = document.createElement('span');
+    plan.append('充值类型：');
+    const value = document.createElement('b');
+    value.textContent = formatRechargeType(item.plan_type);
+    plan.append(value);
+    meta.append(plan);
+  }
   if (item.account_email) {
     const account = document.createElement('span');
     account.append('充值账号：');
@@ -1565,7 +1645,9 @@ async function queryBatch() {
   const codes = parseBatchKeys();
   if (codes.length > 100) return showToast(`单次最多查询 100 个，当前为 ${codes.length} 个`, 'error');
   if (!codes.length) return showToast('请至少输入一个卡密', 'error');
-  if (codes.some((key) => !isPlausibleKey(key))) return showToast('列表中存在长度异常的卡密', 'error');
+  if (codes.some((key) => !isPlausibleChannelKey(key, channel))) {
+    return showToast(channel === 'advanced' ? '列表中存在格式不正确的进阶充值卡密' : '列表中存在长度异常的卡密', 'error');
+  }
 
   $('#batch-view-results').classList.add('hidden');
   setLoading(button, true, '正在查询…');
@@ -1577,7 +1659,7 @@ async function queryBatch() {
     });
     if (channel !== state.activeChannel) return;
     if (!Array.isArray(payload.tasks)) throw new Error('查询接口返回格式异常');
-    const items = mergeTaskResults(codes, payload.tasks);
+    const items = mergeTaskResults(codes, payload.tasks, channel);
     renderBatchSummary(items);
     const container = $('#batch-results');
     container.replaceChildren(...items.map((item) => {
@@ -1804,13 +1886,18 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildCreateTaskPayload,
     formatDateTime,
+    formatRechargeType,
     getCardKeyFromUrl,
+    getQueueCount,
     getQueueDisplay,
     getQueueErrorDisplay,
+    getTaskPollDelay,
     getTaskStatus,
+    isPlausibleChannelKey,
     isPlausibleKey,
     maskKey,
     mergeTaskResults,
+    normalizeChannelKey,
     normalizeKey,
     parseSessionJsonValue,
   };

@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260904-45" />
+    <link rel="stylesheet" href="./styles.css?v=20260908-46" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -120,7 +120,11 @@
 
               <div class="form-section step-section hidden" data-section="2">
                 <div class="verified-card">
-                  <div><span>卡密验证通过</span><b id="masked-card-key">•••• •••• •••• 0000</b></div>
+                  <div>
+                    <span>卡密验证通过</span>
+                    <b id="masked-card-key">•••• •••• •••• 0000</b>
+                    <small class="verified-plan hidden" id="verified-plan"></small>
+                  </div>
                   <div class="verified-card-actions">
                     <button class="hidden" type="button" id="refresh-cdk-btn">换一张卡密</button>
                     <button type="button" id="change-key">更换输入</button>
@@ -194,6 +198,7 @@
                   <div><dt>任务编号</dt><dd id="task-id">—</dd></div>
                   <div><dt>当前状态</dt><dd id="task-status">等待状态更新</dd></div>
                   <div><dt>充值账号</dt><dd id="task-account">等待识别</dd></div>
+                  <div><dt>充值类型</dt><dd id="task-plan">等待识别</dd></div>
                   <div><dt>状态时间</dt><dd id="task-time">—</dd></div>
                 </dl>
                 <div class="task-failure hidden" id="task-failure">
@@ -364,6 +369,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260904-27" defer></script>
+    <script src="./app.js?v=20260908-29" defer></script>
   </body>
 </html>
