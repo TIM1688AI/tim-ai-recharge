@@ -4,7 +4,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
-const { createPartnerApi, tokenHash } = require('./partner-api');
+const { createPartnerApi, createRedisStore, tokenHash } = require('./partner-api');
+
+function createMemoryStore() {
+  const values = new Map();
+  const copy = value => value == null ? null : JSON.parse(JSON.stringify(value));
+  return {
+    values,
+    async create(key, value) { if (values.has(key)) return false; values.set(key, copy(value)); return true; },
+    async get(key) { return copy(values.get(key)); },
+    async set(key, value) { values.set(key, copy(value)); },
+  };
+}
 
 test('partner API enforces partner access and persists idempotency across handlers', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-partner-test-'));
@@ -14,7 +25,8 @@ test('partner API enforces partner access and persists idempotency across handle
   const secondKey = 'second_key_abcdefghijklmnopqrstuvwxyz123456';
   const card = 'TIM-ABCDEFGHIJK';
   const card2 = 'TIM5X-ABCDEFGHIJK';
-  const env = { PARTNER_API_ENABLED: '1', PARTNER_DATA_DIR: dir, PARTNER_CONFIG_FILE: configFile, PARTNER_HASH_SECRET: secret };
+  const env = { PARTNER_API_ENABLED: '1', PARTNER_CONFIG_FILE: configFile, PARTNER_HASH_SECRET: secret };
+  const store = createMemoryStore();
   const config = { partners: [
     { id: 'alice', enabled: true, channels: ['advanced'], key_hashes: [tokenHash(key)] },
     { id: 'bob', enabled: true, channels: ['advanced'], key_hashes: [tokenHash(secondKey)] },
@@ -32,7 +44,7 @@ test('partner API enforces partner access and persists idempotency across handle
     if (name === 'queue-status') return { stock: { plus: 99, plus_year: 0, pro5x: 3, pro20x: 10 } };
   };
   const send = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
-  let handler = createPartnerApi({ invoke, send, env });
+  let handler = createPartnerApi({ invoke, send, env, store });
   const server = http.createServer((req, res) => handler(req, res, new URL(req.url, 'http://local').pathname));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
@@ -53,7 +65,7 @@ test('partner API enforces partner access and persists idempotency across handle
   const pair = await Promise.all([request('/recharges', payload), request('/recharges', payload)]);
   assert.equal(redemptions, 1);
   assert.ok(pair.every(r => r.data.status === 'unconfirmed'));
-  handler = createPartnerApi({ invoke, send, env });
+  handler = createPartnerApi({ invoke, send, env, store });
   assert.equal((await request('/recharges', payload)).data.replayed, true);
   assert.equal(redemptions, 1);
   assert.equal((await request('/recharges', { ...payload, session: '{"test":"different"}' })).status, 409);
@@ -68,25 +80,63 @@ test('partner API enforces partner access and persists idempotency across handle
   eligible = false;
   assert.equal((await request('/recharges', { ...payload, card: card2, request_id: 'rejected_123' })).data.status, 'rejected');
   assert.equal(redemptions, 1);
-  for (const name of fs.readdirSync(dir).filter(n => n !== 'config.json')) {
-    const text = fs.readFileSync(path.join(dir, name), 'utf8');
-    assert.equal(text.includes('SESSION_SECRET'), false);
-    assert.equal(text.includes(card), false);
-    assert.equal(text.includes(key), false);
-  }
-  assert.ok(fs.readdirSync(dir).filter(n => n.startsWith('request-') || n.startsWith('card-')).some(name => fs.readFileSync(path.join(dir, name), 'utf8').includes('"partner_id":"alice"')));
+  const stored = JSON.stringify([...store.values.entries()]);
+  assert.equal(stored.includes('SESSION_SECRET'), false);
+  assert.equal(stored.includes(card), false);
+  assert.equal(stored.includes(key), false);
+  assert.equal(stored.includes('"partner_id":"alice"'), true);
   config.partners[0].enabled = false;
   fs.writeFileSync(configFile, JSON.stringify(config));
   assert.equal((await request('/cards/verify', { channel: 'advanced', card })).status, 401);
   config.partners[0].enabled = true;
   config.partners[0].requests_per_minute = 1;
   fs.writeFileSync(configFile, JSON.stringify(config));
-  handler = createPartnerApi({ invoke, send, env });
+  handler = createPartnerApi({ invoke, send, env, store });
   assert.equal((await request('/cards/verify', { channel: 'advanced', card })).status, 200);
   assert.equal((await request('/cards/verify', { channel: 'advanced', card })).status, 429);
-  handler = createPartnerApi({ invoke, send, env });
+  handler = createPartnerApi({ invoke, send, env, store });
   assert.equal((await request('/cards/verify?card=secret', { channel: 'advanced', card })).status, 400);
   assert.equal((await request('/recharges')).status, 405);
   env.PARTNER_API_ENABLED = '0';
   assert.equal((await request('/stock')).status, 404);
+});
+
+test('Upstash REST store uses authenticated atomic writes and durable reads', async () => {
+  const values = new Map();
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    const [command, key, value, condition] = JSON.parse(options.body);
+    let result = null;
+    if (command === 'SET' && condition === 'NX') {
+      if (!values.has(key)) { values.set(key, value); result = 'OK'; }
+    } else if (command === 'SET') {
+      values.set(key, value); result = 'OK';
+    } else if (command === 'GET') result = values.get(key) ?? null;
+    return { ok: true, json: async () => ({ result }) };
+  };
+  const store = createRedisStore({
+    UPSTASH_REDIS_REST_URL: 'https://example.upstash.io/',
+    UPSTASH_REDIS_REST_TOKEN: 'test_token_abcdefghijklmnopqrstuvwxyz',
+  }, fetchImpl);
+  assert.equal(await store.create('request:one', { status: 'new' }), true);
+  assert.equal(await store.create('request:one', { status: 'duplicate' }), false);
+  assert.deepEqual(await store.get('request:one'), { status: 'new' });
+  await store.set('result:one', { status: 'success' });
+  assert.deepEqual(await store.get('result:one'), { status: 'success' });
+  assert.ok(requests.every(item => item.url === 'https://example.upstash.io' && item.options.headers.Authorization.startsWith('Bearer ')));
+  assert.ok([...values.keys()].every(key => key.startsWith('tim-partner:v1:')));
+});
+
+test('Upstash REST store rejects unsafe configuration and fails closed', async () => {
+  assert.throws(() => createRedisStore({}), error => error.code === 'configuration_required');
+  assert.throws(() => createRedisStore({
+    UPSTASH_REDIS_REST_URL: 'http://example.invalid',
+    UPSTASH_REDIS_REST_TOKEN: 'test_token_abcdefghijklmnopqrstuvwxyz',
+  }), error => error.code === 'configuration_required');
+  const store = createRedisStore({
+    UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
+    UPSTASH_REDIS_REST_TOKEN: 'test_token_abcdefghijklmnopqrstuvwxyz',
+  }, async () => ({ ok: false, json: async () => ({}) }));
+  await assert.rejects(store.create('request:one', {}), error => error.code === 'storage_unavailable');
 });

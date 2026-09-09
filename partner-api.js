@@ -1,5 +1,5 @@
-// Invite-only API. Persistent files contain partner IDs, digests and status only,
-// never Session, raw cards or API keys.
+// Invite-only API. Persistent records contain partner IDs, digests and status
+// only, never Session, raw cards or API keys.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -27,9 +27,43 @@ function session(value) {
   const sort = v => Array.isArray(v) ? v.map(sort) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sort(v[k])])) : v;
   return JSON.stringify(sort(parsed));
 }
-function record(file, data) {
-  const fd = fs.openSync(file, 'wx', 0o600);
-  try { fs.writeFileSync(fd, JSON.stringify(data)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+function createRedisStore(env = process.env, fetchImpl = globalThis.fetch) {
+  const endpoint = env.UPSTASH_REDIS_REST_URL;
+  const token = env.UPSTASH_REDIS_REST_TOKEN;
+  let url;
+  try { url = new URL(endpoint); } catch { fail(503, 'configuration_required'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || typeof token !== 'string' || token.length < 20 || typeof fetchImpl !== 'function') fail(503, 'configuration_required');
+  const base = url.toString().replace(/\/$/, '');
+  async function command(parts) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetchImpl(base, {
+        method: 'POST', redirect: 'error', signal: controller.signal,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(parts),
+      });
+      if (!response.ok) fail(503, 'storage_unavailable');
+      const payload = await response.json();
+      if (!payload || payload.error || !Object.prototype.hasOwnProperty.call(payload, 'result')) fail(503, 'storage_unavailable');
+      return payload.result;
+    } catch (error) {
+      if (error?.status) throw error;
+      fail(503, 'storage_unavailable');
+    } finally { clearTimeout(timer); }
+  }
+  const key = value => `tim-partner:v1:${value}`;
+  return {
+    async create(name, value) { return (await command(['SET', key(name), JSON.stringify(value), 'NX'])) === 'OK'; },
+    async get(name) {
+      const value = await command(['GET', key(name)]);
+      if (value === null) return null;
+      try { return JSON.parse(value); } catch { fail(503, 'storage_unavailable'); }
+    },
+    async set(name, value) {
+      if ((await command(['SET', key(name), JSON.stringify(value)])) !== 'OK') fail(503, 'storage_unavailable');
+    },
+  };
 }
 function resultStatus(task) {
   const state = String(task?.task_status || task?.status || '');
@@ -41,9 +75,10 @@ function eligible(channel, checked) {
   if (checked.ok !== true || s.is_team === true || plan.includes('team')) return false;
   return channel === 'advanced' ? s.can_redeem === true && s.is_team === false : plan === 'free' && s.has_active_subscription !== true && s.can_redeem !== false;
 }
-function createPartnerApi({ invoke, send, env = process.env }) {
+function createPartnerApi({ invoke, send, env = process.env, store }) {
   const buckets = new Map();
   let inflight = 0;
+  let runtimeStore = store;
   function limit(key, maximum) {
     const now = Date.now();
     for (const [k, b] of buckets) if (b.until <= now) buckets.delete(k);
@@ -55,14 +90,13 @@ function createPartnerApi({ invoke, send, env = process.env }) {
   }
   function settings() {
     if (env.PARTNER_API_ENABLED !== '1') fail(404, 'not_found');
-    const dir = env.PARTNER_DATA_DIR;
     const file = env.PARTNER_CONFIG_FILE;
     const secret = env.PARTNER_HASH_SECRET;
-    if (!dir || !file || !path.isAbsolute(dir) || !path.isAbsolute(file) || !secret || secret.length < 32) fail(503, 'configuration_required');
+    if (!file || !path.isAbsolute(file) || !secret || secret.length < 32) fail(503, 'configuration_required');
     const config = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!Array.isArray(config.partners)) fail(503, 'configuration_required');
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    return { config, dir, secret };
+    if (!runtimeStore) runtimeStore = createRedisStore(env);
+    return { config, storage: runtimeStore, secret };
   }
   async function body(request) {
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) fail(415, 'json_required');
@@ -85,7 +119,7 @@ function createPartnerApi({ invoke, send, env = process.env }) {
       if (!operation) fail(404, 'not_found');
       if (request.method !== (operation === 'stock' ? 'GET' : 'POST')) fail(405, 'method_not_allowed');
       if (new URL(request.url, 'http://local').search) fail(400, 'query_parameters_not_allowed');
-      const { config, dir, secret } = settings();
+      const { config, storage, secret } = settings();
       const auth = /^Bearer ([A-Za-z0-9_-]{32,200})$/.exec(request.headers.authorization || '');
       if (!auth) fail(401, 'invalid_api_key');
       const hash = tokenHash(auth[1]);
@@ -132,25 +166,21 @@ function createPartnerApi({ invoke, send, env = process.env }) {
       if (typeof input.request_id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(input.request_id) || input.confirmed !== true) fail(400, 'confirmation_required');
       const id = digest(secret, JSON.stringify([partner.id, input.request_id]));
       const fingerprint = digest(secret, JSON.stringify([channel, card, sessionJson, true]));
-      const intentFile = path.join(dir, `request-${id}.json`);
-      const outcomeFile = path.join(dir, `result-${id}.json`);
-      const claimFile = path.join(dir, `card-${cardHash(secret, channel, card)}.json`);
+      const intentKey = `request:${id}`;
+      const outcomeKey = `result:${id}`;
+      const claimKey = `card:${cardHash(secret, channel, card)}`;
       const fallback = { request_id: input.request_id, status: 'unconfirmed', product: null };
-      try { record(intentFile, { partner_id: partner.id, fingerprint, created_at: new Date().toISOString() }); }
-      catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        const intent = JSON.parse(fs.readFileSync(intentFile, 'utf8'));
+      if (!await storage.create(intentKey, { partner_id: partner.id, fingerprint, created_at: new Date().toISOString() })) {
+        const intent = await storage.get(intentKey);
+        if (!intent) fail(503, 'storage_unavailable');
         if (intent.fingerprint !== fingerprint) fail(409, 'request_id_conflict');
-        if (fs.existsSync(claimFile)) {
-          const claim = JSON.parse(fs.readFileSync(claimFile, 'utf8'));
-          if (claim.request !== id) return send(response, 409, { ok: false, code: 'card_submission_exists', status: 'unconfirmed' });
-        }
-        const prior = fs.existsSync(outcomeFile) ? JSON.parse(fs.readFileSync(outcomeFile, 'utf8')) : fallback;
+        const claim = await storage.get(claimKey);
+        if (claim && claim.request !== id) return send(response, 409, { ok: false, code: 'card_submission_exists', status: 'unconfirmed' });
+        const prior = await storage.get(outcomeKey) || fallback;
         return send(response, prior.status === 'unconfirmed' ? 202 : 200, { ok: true, replayed: true, ...prior });
       }
       // Permanent card claim also prevents a new request ID bypassing deduplication.
-      try { record(claimFile, { partner_id: partner.id, request: id }); }
-      catch (error) { if (error.code !== 'EEXIST') throw error; return send(response, 409, { ok: false, code: 'card_submission_exists', status: 'unconfirmed' }); }
+      if (!await storage.create(claimKey, { partner_id: partner.id, request: id })) return send(response, 409, { ok: false, code: 'card_submission_exists', status: 'unconfirmed' });
       let outcome = fallback;
       try {
         const checked = await invoke(channel, 'check-subscription', { token_input: sessionJson });
@@ -160,11 +190,11 @@ function createPartnerApi({ invoke, send, env = process.env }) {
           outcome = { request_id: input.request_id, ...safeTask(task) };
         }
       } catch { /* Ambiguous results must never trigger automatic redemption retries. */ }
-      record(outcomeFile, outcome);
+      await storage.set(outcomeKey, outcome);
       send(response, ['unconfirmed', 'processing'].includes(outcome.status) ? 202 : 200, { ok: true, ...outcome });
     } catch (error) {
       if (!response.destroyed && !response.writableEnded) send(response, error.status || 503, { ok: false, code: error.code && error.status ? error.code : 'service_unavailable' }, error.status === 429 ? { 'Retry-After': '60' } : {});
     } finally { if (occupied) inflight--; }
   };
 }
-module.exports = { createPartnerApi, cardHash, tokenHash, resultStatus };
+module.exports = { createPartnerApi, createRedisStore, cardHash, tokenHash, resultStatus };
