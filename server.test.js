@@ -394,7 +394,7 @@ test('HTTP boundary enforces methods, content type, static allowlist, and rate l
   assert.equal(logoAsset.headers['content-type'], 'image/png');
   assert.ok(logoAsset.body.length > 0);
 
-  for (const hiddenPath of ['/server.js', '/server.test.js', '/package.json', '/README.md', '/.git/HEAD']) {
+  for (const hiddenPath of ['/server.js', '/server.test.js', '/package.json', '/README.md', '/.git/HEAD', '/partner-api.js', '/partner-tools.js', '/PARTNER_API.md']) {
     const hiddenFile = await request(server, { path: hiddenPath });
     assert.equal(hiddenFile.status, 404, `${hiddenPath} must not be publicly served`);
   }

@@ -1,5 +1,9 @@
 # Tim AI 充值站
 
+## 合作方 API（默认关闭）
+
+新增邀请制 `/partner-api/v1/*`，支持独立 Key、通道权限、持卡调用、限流、持久化请求去重和安全结果映射。网页功能不变。配置、调用契约及第一版限制见 [PARTNER_API.md](PARTNER_API.md)。这部分需要单实例和持久化存储，不能用网页的临时内存保护替代。不要在供应商授权与部署验收前开启。
+
 ## 2026-09-08 进阶协议更新（优先于下方旧版说明）
 
 进阶通道现在由 `advanced.js` 独立对接 `https://jzplus.org/api/verify-key`、`check-session`、`redeem`、`query-key`、`query-keys`、`stock`，不再使用 `/api/v1`。常规通道保持原协议。`ADVANCED_API_BASE_URL` 填供应商根域名，路径部分不会用于进阶端点拼接。

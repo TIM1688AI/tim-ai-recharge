@@ -3,6 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const advanced = require('./advanced');
+const { createPartnerApi } = require('./partner-api');
 
 const configuredPort = Number(process.env.PORT);
 const host = process.env.HOST || '0.0.0.0';
@@ -515,7 +516,33 @@ function proxyApi(request, response, route, publicPath) {
   });
 }
 
+async function invokePartnerProvider(channel, name, payload) {
+  const route = apiRoutes.get(`/api-proxy/${channel}/${name}`);
+  if (!route) throw new Error('Unsupported route');
+  if (route.method === 'POST' && validateProxyPayload(route, payload)) throw new Error('Invalid payload');
+  if (channel === 'advanced') return advanced.handle(route, payload);
+  const provider = getProvider(channel);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+  try {
+    const body = route.method === 'POST' ? Buffer.from(JSON.stringify(payload)) : undefined;
+    const result = await fetch(buildUpstreamUrl(route.upstreamPath, '', provider.baseUrl), {
+      method: route.method, headers: buildUpstreamHeaders(route, body || Buffer.alloc(0)), body,
+      signal: controller.signal, redirect: 'error',
+    });
+    const chunks = []; let length = 0;
+    for await (const chunk of result.body) {
+      length += chunk.length;
+      if (length > maxUpstreamResponseBytes) { controller.abort(); throw new Error('Response too large'); }
+      chunks.push(chunk);
+    }
+    if (!result.ok) throw new Error('Provider unavailable');
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } finally { clearTimeout(timer); }
+}
+
 function createServer() {
+  const partnerHandler = createPartnerApi({ invoke: invokePartnerProvider, send: sendJson });
   const server = http.createServer((request, response) => {
     let pathname;
     try {
@@ -525,6 +552,10 @@ function createServer() {
       return;
     }
 
+    if (pathname.startsWith('/partner-api/')) {
+      void partnerHandler(request, response, pathname);
+      return;
+    }
     if (apiRoutes.has(pathname)) {
       proxyApi(request, response, apiRoutes.get(pathname), pathname);
       return;
@@ -623,7 +654,7 @@ if (require.main === module) {
       console.log('Tim AI: 当前使用本地 API 默认地址 http://localhost:8080/api/v1');
     }
     if (!process.env.ADVANCED_API_BASE_URL) {
-      console.log('Tim AI: 进阶充值默认连接 https://jzplus.org/api/v1');
+      console.log('Tim AI: 进阶充值默认连接 https://jzplus.org/api');
     }
   });
 }

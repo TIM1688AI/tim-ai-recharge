@@ -5,7 +5,7 @@
   "description": "Tim AI membership recharge site",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test server.test.js advanced.test.js"
+    "test": "node --test server.test.js advanced.test.js partner-api.test.js"
   },
   "engines": {
     "node": ">=18"
