@@ -50,7 +50,44 @@ Base URL：`https://你的站点/partner-api/v1`
 
 请求头：`Authorization: Bearer <合作方APIKey>`，POST 还需 `Content-Type: application/json`。不接受 URL 查询参数、不开放跨域 CORS；要求后端调用。返回 `Cache-Control: no-store`。默认每合作方每分钟 60 次，可配置 1–120；全局每分钟 600 次、并发最多 20，另外按源连接 IP 每分钟 180 次（经过 CDN 时可能为共享出口限制）。限流是单进程内存计数，重启后重置。持有有效 Key 的合作方可以操作其持有的任意格式合规卡密，平台不会逐张预登记卡密归属。
 
-除库存外，每次指定 `channel: "regular" | "advanced"`。卡密使用 TIM / TIM5X / TIM20X 或 16 位年度码；常规卡密保留原格式。供应商 JZ 转换仅在服务器进行。
+除 `GET /stock` 外，每次指定 `channel: "regular" | "advanced"`。卡密使用 TIM / TIM5X / TIM20X 或 16 位年度码；常规卡密保留原格式。供应商 JZ 转换仅在服务器进行。
+
+## 功能与通道
+
+| 路径 | 常规 | 进阶 | 说明 |
+| --- | --- | --- | --- |
+| `POST /service/status` | 支持 | 支持 | 检查通道是否可用 |
+| `POST /announcements/current` | 支持 | 返回无公告 | 获取当前公告 |
+| `POST /queue/status` | 队列数量 | 库存等级 | 统一状态入口 |
+| `POST /cards/verify` | 支持 | 支持 | 验证卡密与产品 |
+| `POST /subscriptions/check` | 支持 | 支持 | 独立查询订阅资格 |
+| `POST /recharges` | 支持 | 支持 | 提交充值 |
+| `POST /tasks/query` | 支持 | 支持 | 查询单个任务 |
+| `POST /tasks/batch-query` | 最多 100 张 | 最多 50 张 | 批量查询任务 |
+| `POST /cards/refresh` | 支持 | 不支持 | 更换卡密 |
+| `POST /tasks/cancel` | 支持 | 不支持 | 取消排队任务 |
+
+网页使用的实时队列 SSE 不对合作方开放。合作方应调用 `/queue/status` 展示概览，并使用 `/tasks/query` 轮询具体任务。
+
+### POST /service/status
+
+```json
+{"channel":"advanced"}
+```
+
+返回 `{"ok":true,"available":true,"channel":"advanced"}`。只有 `available:true` 才显示通道可用。
+
+### POST /announcements/current
+
+```json
+{"channel":"regular"}
+```
+
+返回 `ok / enabled / title / message`。`enabled` 不等于 `true` 时隐藏公告。
+
+### POST /queue/status
+
+常规返回 `{"ok":true,"kind":"queue","pending_count":2,"updated_at":"ISO时间"}`。进阶返回 `{"ok":true,"kind":"stock","stock":{"plus":"high","plus_year":"none","pro5x":"medium","pro20x":"low"}}`。库存等级为 `none / low / medium / high / unavailable`，不代表预留。
 
 ### POST /cards/verify
 
@@ -60,13 +97,13 @@ Base URL：`https://你的站点/partner-api/v1`
 
 返回 `{"ok":true,"valid":true,"product":"ChatGPT Plus"}`。`valid:false` 表示本次验证未通过，不能据此推断具体无效原因。
 
-### POST /accounts/check
+### POST /subscriptions/check
 
 ```json
-{"channel":"advanced","card":"TIM-ABCDEFGHIJK","session":"完整Session JSON字符串"}
+{"channel":"advanced","session":"完整Session JSON字符串"}
 ```
 
-返回 `ok`、`email`、`plan`、`can_redeem`。必须显示账号、充值产品和已有会员可能替换订阅的风险，再取得客户确认。常规仅允许 Free，进阶须供应商明确允许且非 Team。不要将 Session 会话过期时间作为会员有效期。
+返回 `ok`、`email`、`plan`、`has_active_subscription`、`is_team`、`expires_at`、`can_redeem`。必须显示账号、当前套餐和已有会员可能替换订阅的风险，再取得客户确认。常规仅允许 Free，进阶须供应商明确允许且非 Team。`expires_at` 仅在上游返回准确值时存在，不能用 Session 会话过期时间替代。兼容路径 `POST /accounts/check` 仍可用。
 
 ### POST /recharges
 
@@ -84,25 +121,47 @@ Base URL：`https://你的站点/partner-api/v1`
 
 状态为 `success / processing / failed / rejected / unconfirmed`。`ok:true` 仅表示 API 正常返回，不代表充值成功。处理中/未确认一般返回 HTTP 202，其他结果为 200。客户端超时设置建议大于 150 秒，但仍需考虑代理限制。
 
-### POST /recharges/query
+### POST /tasks/query
 
 ```json
 {"channel":"advanced","card":"TIM-ABCDEFGHIJK"}
 ```
 
-返回 `{"ok":true,"results":[{"card":"TIM-ABCDEFGHIJK","status":"success","product":"ChatGPT Plus"}]}`。这是读取供应商当前结果的入口。未知/缺失任务保守显示 `unconfirmed`，不直接推断不存在。进阶供应商明确 not_found 才输出 `not_found`。
+返回 `{"ok":true,"results":[{"card":"TIM-ABCDEFGHIJK","status":"success","product":"ChatGPT Plus"}]}`。这是读取供应商当前结果的入口。未知/缺失任务保守显示 `unconfirmed`，不直接推断不存在。进阶供应商明确 not_found 才输出 `not_found`。兼容路径 `POST /recharges/query` 仍可用。
 
-### POST /recharges/batch-query
+### POST /tasks/batch-query
 
 ```json
 {"channel":"advanced","cards":["TIM-ABCDEFGHIJK","TIM5X-ABCDEFGHIJK"]}
 ```
 
-最多 50 个，规范化后去重，保留顺序。任一卡密格式错误则整批拒绝，不查询其他卡密。逐项检查 `status`，可能包含 `unused / success / processing / failed / not_found / unconfirmed`。
+常规最多 100 个，进阶最多 50 个；规范化后去重并保留顺序。任一卡密格式错误则整批拒绝，不查询其他卡密。逐项检查 `status`，可能包含 `unused / success / processing / failed / not_found / unconfirmed`。兼容路径 `POST /recharges/batch-query` 仍可用。
+
+### POST /cards/refresh
+
+仅常规通道。请求：
+
+```json
+{"channel":"regular","card":"原常规卡密","request_id":"refresh_20260910_001","confirmed":true}
+```
+
+成功返回 `status:"success"` 与 `new_card`。旧卡会立即失效，新卡只应向对应客户展示一次。相同 `request_id` 重试会安全重放原结果；新卡在 Redis 中加密保存，响应和日志不得泄露。
+
+### POST /tasks/cancel
+
+仅常规通道，并且只应在卡密验证返回 `pending:true` 与 `cancellable:true` 时使用。请求：
+
+```json
+{"channel":"regular","card":"原常规卡密","request_id":"cancel_20260910_001","confirmed":true}
+```
+
+只有响应中的 `cancelled:true` 才能显示成功。成功后重新验证卡密。相同 `request_id` 重试会安全重放原结果。
 
 ### GET /stock
 
 当前仅提供进阶库存等级，调用方必须拥有 advanced 通道权限。返回 `stock.plus / plus_year / pro5x / pro20x`，值为 `none / low / medium / high / unavailable`；不暴露数量，不保证或预留库存。
+
+这是兼容快捷接口。新接入优先使用 `POST /queue/status`，便于统一处理两个通道。
 
 ## 错误与重复请求
 
@@ -110,6 +169,7 @@ Base URL：`https://你的站点/partner-api/v1`
 | --- | --- | --- |
 | 401 | invalid_api_key | 检查密钥或停用状态 |
 | 403 | channel_not_allowed | 联系管理员检查通道权限 |
+| 403 | operation_not_supported | 当前通道不支持该操作，隐藏对应入口 |
 | 400 | invalid_card / invalid_session / confirmation_required / invalid_card_count | 修正输入 |
 | 409 | request_id_conflict | 同一请求号的参数变化，不允许直接重试充值 |
 | 409 | card_submission_exists | 该卡已通过合作方入口发起过操作，请先查询 |

@@ -14,6 +14,7 @@ function createMemoryStore() {
     async create(key, value) { if (values.has(key)) return false; values.set(key, copy(value)); return true; },
     async get(key) { return copy(values.get(key)); },
     async set(key, value) { values.set(key, copy(value)); },
+    async delete(key) { values.delete(key); },
   };
 }
 
@@ -25,10 +26,11 @@ test('partner API enforces partner access and persists idempotency across handle
   const secondKey = 'second_key_abcdefghijklmnopqrstuvwxyz123456';
   const card = 'TIM-ABCDEFGHIJK';
   const card2 = 'TIM5X-ABCDEFGHIJK';
+  const regularCard = 'REGULAR-ABCDEFGHIJ';
   const env = { PARTNER_API_ENABLED: '1', PARTNER_CONFIG_FILE: configFile, PARTNER_HASH_SECRET: secret };
   const store = createMemoryStore();
   const config = { partners: [
-    { id: 'alice', enabled: true, channels: ['advanced'], key_hashes: [tokenHash(key)] },
+    { id: 'alice', enabled: true, channels: ['regular', 'advanced'], key_hashes: [tokenHash(key)] },
     { id: 'bob', enabled: true, channels: ['advanced'], key_hashes: [tokenHash(secondKey)] },
   ] };
   fs.writeFileSync(configFile, JSON.stringify(config));
@@ -37,11 +39,15 @@ test('partner API enforces partner access and persists idempotency across handle
   let eligible = true;
   const invoke = async (channel, name) => {
     calls++;
-    if (name === 'check-subscription') return { ok: true, summary: { can_redeem: eligible, is_team: false } };
+    if (name === 'status') return { ok: true };
+    if (name === 'announcement') return { enabled: true, title: 'Notice', message: 'Service available', ignored: 'private' };
+    if (name === 'check-subscription') return { ok: true, summary: { account_email: 'account@example.invalid', plan_type: channel === 'regular' ? 'free' : 'plus', has_active_subscription: channel !== 'regular', can_redeem: eligible, is_team: false, expires_at: '2026-12-31T00:00:00Z' } };
     if (name === 'create-task') { redemptions++; throw new Error('Timeout containing sensitive data'); }
     if (name === 'verify-cdk') return { valid: true, plan_type: 'plus' };
+    if (name === 'refresh-cdk') return { new_code: 'REGULAR-NEW-CARD', message: 'Changed' };
+    if (name === 'cancel-task') return { ok: true, message: 'Cancelled' };
     if (name === 'lookup/tasks') return { tasks: [{ cdk_code: card, task_status: 'completed', account_email: 'private@example.invalid' }] };
-    if (name === 'queue-status') return { stock: { plus: 99, plus_year: 0, pro5x: 3, pro20x: 10 } };
+    if (name === 'queue-status') return channel === 'regular' ? { pending_count: 2, at: '2026-09-10T00:00:00Z' } : { stock: { plus: 99, plus_year: 0, pro5x: 3, pro20x: 10 } };
   };
   const send = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
   let handler = createPartnerApi({ invoke, send, env, store });
@@ -59,9 +65,24 @@ test('partner API enforces partner access and persists idempotency across handle
   }
   const payload = { channel: 'advanced', card, session: '{"test":"SESSION_SECRET"}', confirmed: true, request_id: 'order_123456' };
   assert.equal((await request('/cards/verify', { channel: 'advanced', card }, 'wrong')).status, 401);
-  assert.equal((await request('/cards/verify', { channel: 'regular', card: 'REGULAR-CARD' })).status, 403);
+  assert.equal((await request('/cards/verify', { channel: 'regular', card: 'REGULAR-CARD' }, secondKey)).status, 403);
   assert.equal((await request('/cards/verify', { channel: 'advanced', card: 'TIM20X-ABCDEFGHIJK' })).status, 200);
   assert.equal(calls, 1);
+  assert.deepEqual((await request('/service/status', { channel: 'advanced' })).data, { ok: true, available: true, channel: 'advanced' });
+  assert.deepEqual((await request('/announcements/current', { channel: 'advanced' })).data, { ok: true, enabled: true, title: 'Notice', message: 'Service available' });
+  const subscription = await request('/subscriptions/check', { channel: 'advanced', session: '{"test":"SESSION_SECRET"}' });
+  assert.equal(subscription.data.email, 'account@example.invalid');
+  assert.equal(subscription.data.expires_at, '2026-12-31T00:00:00Z');
+  assert.equal(subscription.data.can_redeem, true);
+  const queue = await request('/queue/status', { channel: 'advanced' });
+  assert.equal(queue.data.kind, 'stock');
+  assert.deepEqual(queue.data.stock, { plus: 'high', plus_year: 'none', pro5x: 'low', pro20x: 'medium' });
+  assert.deepEqual((await request('/queue/status', { channel: 'regular' })).data, { ok: true, kind: 'queue', pending_count: 2, updated_at: '2026-09-10T00:00:00Z' });
+  const refreshed = await request('/cards/refresh', { channel: 'regular', card: regularCard, request_id: 'refresh_0001', confirmed: true });
+  assert.equal(refreshed.data.new_card, 'REGULAR-NEW-CARD');
+  assert.equal((await request('/cards/refresh', { channel: 'regular', card: regularCard, request_id: 'refresh_0001', confirmed: true })).data.new_card, 'REGULAR-NEW-CARD');
+  assert.equal((await request('/cards/refresh', { channel: 'advanced', card, request_id: 'refresh_0002', confirmed: true })).data.code, 'operation_not_supported');
+  assert.equal((await request('/tasks/cancel', { channel: 'regular', card: 'REGULAR-CANCEL-CARD', request_id: 'cancel_0001', confirmed: true })).data.cancelled, true);
   const pair = await Promise.all([request('/recharges', payload), request('/recharges', payload)]);
   assert.equal(redemptions, 1);
   assert.ok(pair.every(r => r.data.status === 'unconfirmed'));
@@ -75,6 +96,11 @@ test('partner API enforces partner access and persists idempotency across handle
   assert.equal(redemptions, 1);
   const result = await request('/recharges/query', { channel: 'advanced', card });
   assert.equal(result.data.results[0].status, 'success');
+  assert.equal((await request('/tasks/query', { channel: 'advanced', card })).data.results[0].status, 'success');
+  const regularBatch = Array.from({ length: 100 }, (_, index) => `REGULAR-${String(index).padStart(11, '0')}`);
+  assert.equal((await request('/tasks/batch-query', { channel: 'regular', cards: regularBatch })).status, 200);
+  const advancedBatch = Array.from({ length: 51 }, (_, index) => `TIM-${String(index).padStart(11, '0')}`);
+  assert.equal((await request('/tasks/batch-query', { channel: 'advanced', cards: advancedBatch })).data.code, 'invalid_card_count');
   assert.equal(JSON.stringify(result).includes('private@'), false);
   assert.deepEqual((await request('/stock')).data.stock, { plus: 'high', plus_year: 'none', pro5x: 'low', pro20x: 'medium' });
   eligible = false;
@@ -84,6 +110,7 @@ test('partner API enforces partner access and persists idempotency across handle
   assert.equal(stored.includes('SESSION_SECRET'), false);
   assert.equal(stored.includes(card), false);
   assert.equal(stored.includes(key), false);
+  assert.equal(stored.includes('REGULAR-NEW-CARD'), false);
   assert.equal(stored.includes('"partner_id":"alice"'), true);
   config.partners[0].enabled = false;
   fs.writeFileSync(configFile, JSON.stringify(config));
@@ -113,6 +140,7 @@ test('Upstash REST store uses authenticated atomic writes and durable reads', as
     } else if (command === 'SET') {
       values.set(key, value); result = 'OK';
     } else if (command === 'GET') result = values.get(key) ?? null;
+    else if (command === 'DEL') { result = values.delete(key) ? 1 : 0; }
     return { ok: true, json: async () => ({ result }) };
   };
   const store = createRedisStore({
@@ -124,6 +152,8 @@ test('Upstash REST store uses authenticated atomic writes and durable reads', as
   assert.deepEqual(await store.get('request:one'), { status: 'new' });
   await store.set('result:one', { status: 'success' });
   assert.deepEqual(await store.get('result:one'), { status: 'success' });
+  await store.delete('result:one');
+  assert.equal(await store.get('result:one'), null);
   assert.ok(requests.every(item => item.url === 'https://example.upstash.io' && item.options.headers.Authorization.startsWith('Bearer ')));
   assert.ok([...values.keys()].every(key => key.startsWith('tim-partner:v1:')));
 });

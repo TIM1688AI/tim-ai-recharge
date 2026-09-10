@@ -5,12 +5,31 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const advanced = require('./advanced');
 const routes = {
-  '/cards/verify': 'verify', '/accounts/check': 'check', '/recharges': 'redeem',
-  '/recharges/query': 'query', '/recharges/batch-query': 'batch', '/stock': 'stock',
+  '/service/status': 'status', '/announcements/current': 'announcement', '/queue/status': 'queue',
+  '/cards/verify': 'verify', '/cards/refresh': 'refresh', '/accounts/check': 'check', '/recharges': 'redeem',
+  '/subscriptions/check': 'subscription',
+  '/recharges/query': 'query', '/tasks/query': 'query', '/tasks/cancel': 'cancel',
+  '/recharges/batch-query': 'batch', '/tasks/batch-query': 'batch', '/stock': 'stock',
 };
 function fail(status, code) { throw Object.assign(new Error(code), { status, code }); }
 function digest(secret, value) { return crypto.createHmac('sha256', secret).update(value).digest('hex'); }
 function tokenHash(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
+function outcomeKey(secret) { return crypto.createHash('sha256').update('tim-partner-outcome\0').update(secret).digest(); }
+function seal(secret, value) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', outcomeKey(secret), iv);
+  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  return ['v1', iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), encrypted.toString('base64url')].join('.');
+}
+function unseal(secret, value) {
+  try {
+    const [version, iv, tag, encrypted] = String(value).split('.');
+    if (version !== 'v1' || !iv || !tag || !encrypted) throw new Error();
+    const decipher = crypto.createDecipheriv('aes-256-gcm', outcomeKey(secret), Buffer.from(iv, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64url')), decipher.final()]).toString('utf8');
+  } catch { fail(503, 'storage_unavailable'); }
+}
 function normalize(channel, card) {
   if (typeof card !== 'string') fail(400, 'invalid_card');
   const value = channel === 'advanced' ? card.replace(/\s+/g, '').toUpperCase() : card.trim();
@@ -63,12 +82,14 @@ function createRedisStore(env = process.env, fetchImpl = globalThis.fetch) {
     async set(name, value) {
       if ((await command(['SET', key(name), JSON.stringify(value)])) !== 'OK') fail(503, 'storage_unavailable');
     },
+    async delete(name) { await command(['DEL', key(name)]); },
   };
 }
 function resultStatus(task) {
   const state = String(task?.task_status || task?.status || '');
   return ({ completed: 'success', success: 'success', failed: 'failed', pending: 'processing', submitted: 'processing', manual_review: 'processing', active: 'unused', not_found: 'not_found' })[state] || 'unconfirmed';
 }
+function safeText(value, limit) { return typeof value === 'string' ? value.slice(0, limit) : null; }
 function eligible(channel, checked) {
   const s = checked.summary || {};
   const plan = String(s.plan_type || '').toLowerCase();
@@ -135,13 +156,39 @@ function createPartnerApi({ invoke, send, env = process.env, store }) {
       // allowed channel. Card digests are still claimed permanently on submit
       // so changing request_id cannot cause a duplicate redemption.
       function accept(card) { return normalize(channel, card); }
-      if (operation === 'stock') {
+      const grade = n => !Number.isSafeInteger(n) || n < 0 ? 'unavailable' : n === 0 ? 'none' : n <= 5 ? 'low' : n <= 15 ? 'medium' : 'high';
+      if (operation === 'status') {
+        await invoke(channel, 'status', {});
+        return send(response, 200, { ok: true, available: true, channel });
+      }
+      if (operation === 'announcement') {
+        const value = await invoke(channel, 'announcement', {});
+        return send(response, 200, { ok: true, enabled: value.enabled === true, title: safeText(value.title, 120), message: safeText(value.message, 2000) });
+      }
+      if (operation === 'queue' || operation === 'stock') {
         const value = await invoke(channel, 'queue-status', {});
-        const grade = n => !Number.isSafeInteger(n) || n < 0 ? 'unavailable' : n === 0 ? 'none' : n <= 5 ? 'low' : n <= 15 ? 'medium' : 'high';
-        return send(response, 200, { ok: true, stock: Object.fromEntries(['plus', 'plus_year', 'pro5x', 'pro20x'].map(k => [k, grade(value.stock?.[k])])) });
+        if (channel === 'advanced') return send(response, 200, { ok: true, kind: 'stock', stock: Object.fromEntries(['plus', 'plus_year', 'pro5x', 'pro20x'].map(k => [k, grade(value.stock?.[k])])) });
+        const pending = Number(value.pending_count);
+        if (!Number.isSafeInteger(pending) || pending < 0) fail(502, 'provider_unavailable');
+        return send(response, 200, { ok: true, kind: 'queue', pending_count: pending, updated_at: safeText(value.at, 80) });
+      }
+      if (operation === 'check' || operation === 'subscription') {
+        const sessionJson = session(input.session);
+        const value = await invoke(channel, 'check-subscription', { token_input: sessionJson });
+        const s = value.summary || {};
+        return send(response, 200, {
+          ok: value.ok === true,
+          email: safeText(s.account_email, 320),
+          plan: safeText(s.plan_type || s.subscription_plan, 120),
+          has_active_subscription: s.has_active_subscription === true,
+          is_team: s.is_team === true,
+          can_redeem: eligible(channel, value),
+          expires_at: safeText(s.expires_at, 80),
+        });
       }
       const cards = operation === 'batch' ? input.cards : [input.card];
-      if (!Array.isArray(cards) || cards.length < 1 || cards.length > 50) fail(400, 'invalid_card_count');
+      const maxCards = operation === 'batch' && channel === 'regular' ? 100 : 50;
+      if (!Array.isArray(cards) || cards.length < 1 || cards.length > maxCards) fail(400, 'invalid_card_count');
       const accepted = [...new Set(cards.map(accept))];
       const card = accepted[0];
       const safeTask = task => ({ status: resultStatus(task), product: typeof task?.plan_type === 'string' ? task.plan_type.slice(0, 120) : null });
@@ -155,14 +202,60 @@ function createPartnerApi({ invoke, send, env = process.env, store }) {
       }
       if (operation === 'verify') {
         const value = await invoke(channel, 'verify-cdk', { cdk_code: card });
-        return send(response, 200, { ok: true, valid: value.valid === true, product: typeof value.plan_type === 'string' ? value.plan_type.slice(0, 120) : null });
+        return send(response, 200, {
+          ok: true,
+          valid: value.valid === true,
+          product: safeText(value.plan_type, 120),
+          pending: value.pending === true,
+          cancellable: value.cancellable === true,
+          refresh_remaining: Number.isSafeInteger(Number(value.refresh_remaining)) ? Math.max(0, Number(value.refresh_remaining)) : 0,
+        });
+      }
+      if (operation === 'refresh' || operation === 'cancel') {
+        if (channel !== 'regular') fail(403, 'operation_not_supported');
+        if (typeof input.request_id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(input.request_id) || input.confirmed !== true) fail(400, 'confirmation_required');
+        const id = digest(secret, JSON.stringify([partner.id, operation, input.request_id]));
+        const fingerprint = digest(secret, JSON.stringify([operation, channel, card, true]));
+        const intentKey = `action:${operation}:request:${id}`;
+        const outcomeKeyName = `action:${operation}:result:${id}`;
+        const claimKey = `card:${cardHash(secret, channel, card)}`;
+        const publicOutcome = stored => {
+          if (!stored) return { request_id: input.request_id, status: 'unconfirmed' };
+          if (operation !== 'refresh' || !stored.sealed_new_card) return stored;
+          const { sealed_new_card, ...rest } = stored;
+          return { ...rest, new_card: unseal(secret, sealed_new_card) };
+        };
+        if (!await storage.create(intentKey, { partner_id: partner.id, fingerprint, created_at: new Date().toISOString() })) {
+          const intent = await storage.get(intentKey);
+          if (!intent) fail(503, 'storage_unavailable');
+          if (intent.fingerprint !== fingerprint) fail(409, 'request_id_conflict');
+          const prior = publicOutcome(await storage.get(outcomeKeyName));
+          return send(response, prior.status === 'unconfirmed' ? 202 : 200, { ok: true, replayed: true, ...prior });
+        }
+        if (operation === 'refresh' && !await storage.create(claimKey, { partner_id: partner.id, request: id, action: operation })) {
+          return send(response, 409, { ok: false, code: 'card_submission_exists', status: 'unconfirmed' });
+        }
+        let outcome = { request_id: input.request_id, status: 'unconfirmed' };
+        try {
+          if (operation === 'refresh') {
+            const value = await invoke(channel, 'refresh-cdk', { cdk_code: card });
+            const newCard = normalize(channel, value.new_code);
+            outcome = { request_id: input.request_id, status: 'success', new_card: newCard, message: safeText(value.message, 500) };
+          } else {
+            const value = await invoke(channel, 'cancel-task', { cdk_code: card });
+            if (value.ok === true) {
+              await storage.delete(claimKey);
+              outcome = { request_id: input.request_id, status: 'success', cancelled: true, message: safeText(value.message, 500) };
+            } else outcome = { request_id: input.request_id, status: 'failed', cancelled: false, message: safeText(value.error || value.message, 500) };
+          }
+        } catch { /* Store an uncertain outcome; never repeat a destructive action automatically. */ }
+        const stored = operation === 'refresh' && outcome.new_card
+          ? { ...outcome, new_card: undefined, sealed_new_card: seal(secret, outcome.new_card) }
+          : outcome;
+        await storage.set(outcomeKeyName, stored);
+        return send(response, outcome.status === 'unconfirmed' ? 202 : 200, { ok: true, ...outcome });
       }
       const sessionJson = session(input.session);
-      if (operation === 'check') {
-        const value = await invoke(channel, 'check-subscription', { token_input: sessionJson });
-        const s = value.summary || {};
-        return send(response, 200, { ok: value.ok === true, email: typeof s.account_email === 'string' ? s.account_email : null, plan: s.plan_type || null, can_redeem: eligible(channel, value) });
-      }
       if (typeof input.request_id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(input.request_id) || input.confirmed !== true) fail(400, 'confirmation_required');
       const id = digest(secret, JSON.stringify([partner.id, input.request_id]));
       const fingerprint = digest(secret, JSON.stringify([channel, card, sessionJson, true]));
