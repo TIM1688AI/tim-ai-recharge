@@ -83,7 +83,7 @@ test('人工复核信号必须停止轮询，未知状态不能误判成功', as
 
 test('不支持的兑换类型和非 unused 卡密不能发送兑换', async () => {
   for (const data of [
-    { valid: true, status: 'unused', redeem_type: 'claude_org_id' },
+    { valid: true, status: 'unused', redeem_type: 'chatgpt_session_json' },
     { valid: true, status: 'processing', redeem_type: 'chatgpt_account_id' },
   ]) {
     const calls = [];
@@ -91,5 +91,30 @@ test('不支持的兑换类型和非 unused 卡密不能发送兑换', async () 
     await assert.rejects(api.handle(route('create-task'), { cdk_code: CARD, account_id: ACCOUNT, account_confirm: ACCOUNT }));
     assert.equal(calls.length, 1);
     assert.ok(calls[0].endsWith('/cards/probe'));
+  }
+});
+
+test('ChatGPT 和 Claude 及文档别名按供应商类型兑换，拒绝目标错配', async () => {
+  for (const [supplierType, canonical] of [
+    ['chatgpt_account_id', 'chatgpt_account_id'], ['account_id', 'chatgpt_account_id'],
+    ['claude_org_id', 'claude_org_id'], ['claude_org', 'claude_org_id'], ['organization_id', 'claude_org_id'],
+  ]) {
+    const posts = [];
+    const api = createPremiumApi({ getKey: () => 'fake', fetchImpl: async (url, options) => {
+      if (String(url).endsWith('/cards/probe')) return envelope({ valid: true, status: 'unused', redeem_type: supplierType });
+      posts.push(JSON.parse(options.body));
+      return envelope({ status: 2, order_no: 'MOCK' });
+    } });
+    const verified = await api.handle(route('verify-cdk'), { cdk_code: CARD });
+    assert.equal(verified.valid, true);
+    assert.equal(verified.redeem_type, canonical);
+    const input = { cdk_code: CARD, account_id: ACCOUNT, account_confirm: ACCOUNT, redeem_type: canonical };
+    await api.handle(route('create-task'), input);
+    assert.equal(posts[0].redeem_type, canonical);
+    assert.equal(posts[0].target_value, ACCOUNT);
+    assert.equal(posts[0].target_confirm, ACCOUNT);
+    await assert.rejects(api.handle(route('create-task'), { ...input,
+      redeem_type: canonical === 'claude_org_id' ? 'chatgpt_account_id' : 'claude_org_id' }), /类型已变化/);
+    assert.equal(posts.length, 1);
   }
 });

@@ -8,7 +8,7 @@ const CONFIG = {
   channels: Object.freeze({
     regular: Object.freeze({ id: 'regular', label: '常规充值', supportsRefresh: true, supportsCancel: true, supportsQueueEvents: true, allowsActiveSubscription: false, taskPollSchedule: [5000], cardNote: '常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。', recordsNote: '查询常规充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
     advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [10000, 15000, 30000], cardNote: '进阶充值：支持 TIM 系列卡密，已有会员确认后可覆盖充值，Team 暂不支持。', recordsNote: '查询卡密与充值结果；单次最多 50 个，已使用不等于充值成功' }),
-    premium: Object.freeze({ id: 'premium', label: '高阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [5000, 10000, 15000], cardNote: '高阶充值：验证卡密后填写 ChatGPT Account ID，具体产品以验证结果为准。', recordsNote: '输入本通道卡密查询处理结果；单次最多 20 个' }),
+    premium: Object.freeze({ id: 'premium', label: '高阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [5000, 10000, 15000], cardNote: '高阶充值：支持 ChatGPT / Claude，验证后按提示填写账号或组织 ID。', recordsNote: '输入本通道卡密查询处理结果；单次最多 20 个' }),
   }),
 };
 
@@ -16,6 +16,7 @@ const state = {
   activeChannel: 'regular',
   verifiedCardKey: '',
   verifiedPlan: '',
+  verifiedRedeemType: '',
   refreshRemaining: 0,
   pendingRedeemSession: null,
   activeTask: null,
@@ -639,6 +640,26 @@ function startQueueUpdates() {
   });
 }
 
+function getPremiumTargetLabel(type = state.verifiedRedeemType) {
+  return type === 'claude_org_id' ? 'Claude Organization ID' : 'ChatGPT Account ID';
+}
+
+function updatePremiumTargetInterface() {
+  if (state.activeChannel !== 'premium') return;
+  const known = Boolean(state.verifiedRedeemType);
+  const claude = state.verifiedRedeemType === 'claude_org_id';
+  const label = getPremiumTargetLabel();
+  $('#step-two-label').textContent = known ? (claude ? '填写组织 ID' : '填写账号 ID') : '填写充值 ID';
+  $('label[for="premium-account-id"]').textContent = label;
+  $('label[for="premium-account-confirm"]').textContent = `再次输入${claude ? ' Organization ID' : ' Account ID'}`;
+  $('#premium-account-note').textContent = `本卡按 ${label} 充值。请核对两次输入，本站无法预先查询订阅状态。`;
+  $('#guide-target-title').textContent = known ? (claude ? '确认 Claude 组织 ID' : '确认 ChatGPT 账号 ID') : '确认充值 ID';
+  $('#guide-target-copy').textContent = known
+    ? `填写目标${claude ? ' Claude 组织' : ' ChatGPT 账号'}的 36 位 ${claude ? 'Organization ID' : 'Account ID'}，输入两次后再提交。`
+    : '验证后按提示填写 ChatGPT Account ID 或 Claude Organization ID，并再次确认。';
+  $('.recharge-shell > .privacy-note b').textContent = '浏览器端不保存充值 ID';
+}
+
 function updateChannelInterface() {
   const channel = getChannel();
   const premium = channel.id === 'premium';
@@ -671,6 +692,7 @@ function updateChannelInterface() {
   $('.hero-trust > div:nth-child(3) span').textContent = premium ? '不留存账号信息' : '不留存 Session';
   $('.recharge-shell > .privacy-note b').textContent = premium ? '浏览器端不保存 Account ID' : '浏览器端不保存 Session JSON';
   updateBatchControls();
+  updatePremiumTargetInterface();
 }
 
 function hasRechargeDraft() {
@@ -753,7 +775,11 @@ function openAccountConfirmModal(sessionInfo, { returnFocus = document.activeEle
     ? '订阅状态暂未确认，服务端会在处理时实时复查。请确认账号无误。'
     : '请仔细核对账号，确认后才会提交充值。';
   if (isAdvancedChannel()) $('#account-confirm-note').textContent = `充值产品：${state.verifiedPlan || '以卡密验证结果为准'}。${sessionInfo.replacementWarning ? '本次充值可能替换现有订阅，请确认接受后再提交。' : '请核对账号与产品，确认后提交。'}`;
-  if (state.activeChannel === 'premium') $('#account-confirm-note').textContent = `充值产品：${state.verifiedPlan || '以卡密验证结果为准'}。本通道无法预先核查现有订阅，请确认 Account ID 与产品无误。`;
+  $('#account-confirm-modal > .modal > p:first-of-type').textContent = state.activeChannel === 'premium'
+    ? `本次将按以下 ${getPremiumTargetLabel()} 充值，请确认目标与产品一致。`
+    : '本次 ChatGPT 会员将充值到以下账号，请确认无误后继续。';
+  $('.account-confirm-card > span').textContent = state.activeChannel === 'premium' ? getPremiumTargetLabel() : '充值账号';
+  if (state.activeChannel === 'premium') $('#account-confirm-note').textContent = `充值产品：${state.verifiedPlan || '以卡密验证结果为准'}。本通道无法预先核查现有订阅，请确认 ${getPremiumTargetLabel()} 与产品无误。`;
   setModalVisibility($('#account-confirm-modal'), true);
   $('#cancel-account-redeem').focus();
 }
@@ -1106,6 +1132,7 @@ function resetRecharge() {
   state.taskGeneration += 1;
   state.verifiedCardKey = '';
   state.verifiedPlan = '';
+  state.verifiedRedeemType = '';
   state.refreshRemaining = 0;
   state.activeTask = null;
   closeAccountConfirmModal({ restoreFocus: false });
@@ -1121,6 +1148,7 @@ function resetRecharge() {
   $('#refresh-result').classList.add('hidden');
   $('#refreshed-card-code').textContent = '';
   showStep(1);
+  updatePremiumTargetInterface();
 }
 
 function getTaskStatus(task) {
@@ -1194,7 +1222,7 @@ function parseSessionJsonValue(value) {
 }
 
 function buildCreateTaskPayload(cardKey, sessionInfo) {
-  if (state.activeChannel === 'premium') return { cdk_code: cardKey, account_id: sessionInfo.accountId, account_confirm: sessionInfo.accountId };
+  if (state.activeChannel === 'premium') return { cdk_code: cardKey, account_id: sessionInfo.accountId, account_confirm: sessionInfo.accountId, redeem_type: sessionInfo.redeemType };
   return {
     cdk_code: cardKey,
     session_json: sessionInfo.sessionJson,
@@ -1247,6 +1275,13 @@ async function verifyCard() {
     }
     state.verifiedCardKey = cardKey;
     state.verifiedPlan = String(result.plan_type || '');
+    if (channel.id === 'premium') {
+      if (!['chatgpt_account_id', 'claude_org_id'].includes(result.redeem_type)) throw new Error('卡密兑换类型无法识别，请刷新页面后重新验证');
+      state.verifiedRedeemType = result.redeem_type;
+      $('#premium-account-id').value = '';
+      $('#premium-account-confirm').value = '';
+      updatePremiumTargetInterface();
+    }
     const verifiedPlan = $('#verified-plan');
     if (state.verifiedPlan) {
       verifiedPlan.textContent = `充值类型：${formatRechargeType(state.verifiedPlan)}`;
@@ -1281,16 +1316,16 @@ async function prepareRedeem() {
     const accountId = $('#premium-account-id').value.trim().toLowerCase();
     const confirmed = $('#premium-account-confirm').value.trim().toLowerCase();
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(accountId)) {
-      showToast('请填写完整的 36 位 ChatGPT Account ID', 'error');
+      showToast(`请填写完整的 36 位 ${getPremiumTargetLabel()}`, 'error');
       $('#premium-account-id').focus();
       return;
     }
     if (accountId !== confirmed) {
-      showToast('两次填写的 Account ID 不一致', 'error');
+      showToast(`两次填写的 ${getPremiumTargetLabel()} 不一致`, 'error');
       $('#premium-account-confirm').focus();
       return;
     }
-    openAccountConfirmModal({ accountId, accountLabel: accountId, confirmedCard, confirmedChannel: channel.id });
+    openAccountConfirmModal({ accountId, accountLabel: accountId, redeemType: state.verifiedRedeemType, confirmedCard, confirmedChannel: channel.id });
     return;
   }
   let sessionInfo;
@@ -1439,7 +1474,7 @@ function renderTask(task) {
   if (task.advanced) $('#task-result-copy').textContent = status.kind === 'completed' ? '充值已完成，请返回 ChatGPT 核对订阅。' : '请以查询结果为准；结果未确认前请勿重复充值。需要协助请联系供应商。';
   if (task.advanced) $('#task-result-copy').append(' 离开页面后，可在“充值记录”中输入原卡密查询结果。');
   $('#task-status').textContent = status.label;
-  $('#task-account').textContent = task.premium ? '已按 Account ID 提交' : task.account_email ? maskEmail(task.account_email) : '等待识别';
+  $('#task-account').textContent = task.premium ? '以提交时确认的充值 ID 为准' : task.account_email ? maskEmail(task.account_email) : '等待识别';
   $('#task-plan').textContent = formatRechargeType(task.plan_type || state.activeTask?.planType);
   $('#task-time').textContent = formatDateTime(task.completed_at || task.updated_at || task.created_at);
   const failure = $('#task-failure');
@@ -1577,7 +1612,8 @@ async function submitRedeem(sessionInfo) {
   const channel = state.activeChannel;
   let unchanged = false;
   if (channel === 'premium') unchanged = sessionInfo.accountId === $('#premium-account-id').value.trim().toLowerCase()
-    && sessionInfo.accountId === $('#premium-account-confirm').value.trim().toLowerCase();
+    && sessionInfo.accountId === $('#premium-account-confirm').value.trim().toLowerCase()
+    && sessionInfo.redeemType === state.verifiedRedeemType;
   else try { unchanged = sessionInfo.sessionJson === JSON.stringify(JSON.parse($('#session-json').value)); } catch { /* Invalid edited input requires a fresh confirmation. */ }
   if (sessionInfo.confirmedCard !== cardKey || sessionInfo.confirmedChannel !== channel || !unchanged) {
     clearPendingRedeemSession();

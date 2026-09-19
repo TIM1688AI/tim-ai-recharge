@@ -8,7 +8,7 @@
 
 在 Node 托管平台的服务端环境变量中配置 `AGENT_API_KEY`（真实值只在平台密钥配置中填写）以及可选的 `AGENT_API_BASE_URL`。后者默认 `https://www.vip555ai.com`，必须是 HTTPS 站点根地址；此前供应商若指定了其他有效 API 域名，可覆盖它。浏览器只请求本站的同源 `/api-proxy/premium/*`，Key 只由服务端放入 `X-Agent-API-Key` 请求头。缺少 Key 时本通道返回明确的未配置提示，不影响常规和进阶通道。
 
-目前网站只接收供应商卡密 `redeem_type=chatgpt_account_id`，要求用户两次输入相同的 36 位 ChatGPT Account ID。其他兑换类型会停止提交；高阶通道没有订阅预检 API，不能预先保证覆盖资格。卡密前缀不做 TIM 改写，因为文档未定义此通道的前缀规则。提交请求使用从服务端 Key 与卡密派生的稳定幂等号；未知、处理中和复核状态只查询，不自动创建新订单。更换 `AGENT_API_KEY` 后幂等号会变化，因此轮换密钥前应先核对未完成订单，并以卡密状态继续追踪。
+高阶通道按卡密验证返回的 `redeem_type` 自动识别 ChatGPT 与 Claude：`chatgpt_account_id` 填写 36 位 ChatGPT Account ID，`claude_org_id` 填写 36 位 Claude Organization ID，均须输入两次并确认。兼容文档中的 `account_id`、`claude_org`、`organization_id` 别名，提交时统一使用规范值；服务端会再次验证卡密并核对兑换类型，防止目标类型错配。Session JSON 等其他类型暂不支持。高阶通道没有订阅预检 API，不能预先保证覆盖资格。卡密前缀不做 TIM 改写，因为文档未定义此通道的前缀规则。提交请求使用从服务端 Key 与卡密派生的稳定幂等号；未知、处理中和复核状态只查询，不自动创建新订单。更换 `AGENT_API_KEY` 后幂等号会变化，因此轮换密钥前应先核对未完成订单，并以卡密状态继续追踪。
 
 请关闭托管平台的请求体日志与敏感数据采集。本站不记录或公开供应商返回的原始邮箱、Account ID、完整 Key 或卡密。上线前仍需使用供应商授权的测试卡与实际 Key 完成端到端验收；本地模拟测试不代表生产连通。不要把 Key 写入 `.env` 后提交到 Git。
 

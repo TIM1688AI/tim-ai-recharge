@@ -2,6 +2,11 @@ const crypto = require('crypto');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUSES = new Set(['invalid', 'unused', 'pending', 'processing', 'used', 'disabled', 'success', 'failed', 'review', 'unknown']);
+function normalizeRedeemType(value) {
+  const types = { chatgpt_account_id: 'chatgpt_account_id', account_id: 'chatgpt_account_id',
+    claude_org_id: 'claude_org_id', claude_org: 'claude_org_id', organization_id: 'claude_org_id' };
+  return typeof value === 'string' && Object.hasOwn(types, value) ? types[value] : '';
+}
 
 function normalizeCard(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, '').toUpperCase() : '';
@@ -18,8 +23,9 @@ function validate(routeName, payload) {
   }
   if (routeName === 'create-task') {
     if (!isCard(normalizeCard(payload.cdk_code))) return '卡密须为 8–64 位字符';
-    if (!UUID.test(String(payload.account_id || ''))) return 'ChatGPT Account ID 须为 36 位 UUID';
-    if (payload.account_id !== payload.account_confirm) return '两次填写的 Account ID 不一致';
+    if (!normalizeRedeemType(payload.redeem_type || 'chatgpt_account_id')) return '不支持的兑换类型';
+    if (!UUID.test(String(payload.account_id || ''))) return 'Account ID 或 Organization ID 须为 36 位 UUID';
+    if (payload.account_id !== payload.account_confirm) return '两次填写的 ID 不一致';
     return null;
   }
   if (routeName === 'lookup/tasks') {
@@ -138,18 +144,23 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
       const data = await call('POST', '/cards/probe', { code: card });
       if (data.valid !== true) return { valid: false, error: '卡密无效或不属于当前通道' };
       if (data.status !== 'unused') return { valid: false, pending: ['processing', 'used', 'unknown'].includes(data.status), error: '卡密当前不可提交，请查询结果' };
-      if (data.redeem_type !== 'chatgpt_account_id') return { valid: false, error: '此卡密需要其他兑换目标，当前网站暂不支持' };
-      return { valid: true, plan_type: String(data.product_name || data.product_code || '') };
+      const redeemType = normalizeRedeemType(data.redeem_type);
+      if (!redeemType) return { valid: false, error: '此卡密需要其他兑换目标，当前网站暂不支持' };
+      return { valid: true, plan_type: String(data.product_name || data.product_code || ''), redeem_type: redeemType };
     }
     if (route.routeName === 'create-task') {
       const card = normalizeCard(payload.cdk_code);
       const probe = await call('POST', '/cards/probe', { code: card });
-      if (probe.valid !== true || probe.status !== 'unused' || probe.redeem_type !== 'chatgpt_account_id') {
+      const redeemType = normalizeRedeemType(probe.redeem_type);
+      if (probe.valid !== true || probe.status !== 'unused' || !redeemType) {
         throw Object.assign(new Error('卡密状态已变化，请先查询结果'), { status: 409 });
+      }
+      if (redeemType !== normalizeRedeemType(payload.redeem_type || 'chatgpt_account_id')) {
+        throw Object.assign(new Error('兑换类型已变化，请重新验证卡密'), { status: 409, publicMessage: '兑换类型已变化，请重新验证卡密' });
       }
       const id = payload.account_id.toLowerCase();
       const data = await call('POST', '/cards/redeem', {
-        card_code: card, redeem_type: 'chatgpt_account_id', target_value: id,
+        card_code: card, redeem_type: redeemType, target_value: id,
         target_confirm: id, idempotency_key: idempotencyKey(card),
       });
       const numericStatus = Number(data.status);
