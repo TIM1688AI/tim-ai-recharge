@@ -3,6 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const advanced = require('./advanced');
+const { createPremiumApi, validate: validatePremiumPayload } = require('./premium');
 const { createPartnerApi } = require('./partner-api');
 
 const configuredPort = Number(process.env.PORT);
@@ -17,6 +18,7 @@ const upstreamBaseUrl = createUpstreamBaseUrl(
   process.env.REGULAR_API_BASE_URL || process.env.CDK_API_BASE_URL || 'http://localhost:8080/api/v1',
 );
 const advancedUpstreamBaseUrl = createUpstreamBaseUrl(process.env.ADVANCED_API_BASE_URL || 'https://jzplus.org');
+const premium = createPremiumApi();
 const providers = Object.freeze({
   regular: Object.freeze({
     id: 'regular',
@@ -66,6 +68,7 @@ const rateLimitByRoute = Object.freeze({
   'queue-status': { perIp: 30, global: 600, rawPerIp: 60 },
   'queue-events': { perIp: 12, global: 600, rawPerIp: 24 },
   'lookup/tasks': { perIp: 30, global: 600, rawPerIp: 60 },
+  'redeem-status': { perIp: 30, global: 600, rawPerIp: 60 },
 });
 
 function buildApiRoutes() {
@@ -81,6 +84,12 @@ function buildApiRoutes() {
   };
   register('regular', '/regular', [...routeDefinitions, ...regularOnlyRouteDefinitions]);
   register('advanced', '/advanced', routeDefinitions);
+  register('premium', '/premium', [
+    ['verify-cdk', { method: 'POST', upstreamPath: 'premium/verify-cdk' }],
+    ['create-task', { method: 'POST', upstreamPath: 'premium/create-task' }],
+    ['redeem-status', { method: 'POST', upstreamPath: 'premium/redeem-status' }],
+    ['lookup/tasks', { method: 'POST', upstreamPath: 'premium/lookup/tasks' }],
+  ]);
   // Preserve the original public paths for existing card links and integrations.
   register('regular', '', [...routeDefinitions, ...regularOnlyRouteDefinitions]);
   return routes;
@@ -298,6 +307,7 @@ function validateProxyPayload(routeOrPath, payload) {
     ? { upstreamPath: routeOrPath, channel: 'regular' }
     : routeOrPath;
   const upstreamPath = route?.upstreamPath;
+  if (route?.channel === 'premium') return validatePremiumPayload(route.routeName, payload);
   const acceptsCdk = route?.channel === 'advanced' ? isAdvancedCdkCode : isCdkCode;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '请求体必须是 JSON 对象';
 
@@ -366,6 +376,17 @@ function buildUpstreamHeaders(route, body) {
 }
 
 function forwardUpstream(request, response, route, body) {
+  if (route.channel === 'premium') {
+    const payload = JSON.parse(body.toString('utf8'));
+    premium.handle(route, payload).then(result => {
+      if (!response.destroyed) sendJson(response, 200, result);
+    }).catch(error => {
+      if (!response.destroyed) sendJson(response, error.status || 502, {
+        error: error.publicMessage || '高阶服务暂不可用，请稍后查询结果',
+      });
+    });
+    return;
+  }
   if (route.channel === 'advanced') {
     const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
     advanced.handle(route, payload).then(result => {
@@ -512,7 +533,7 @@ function proxyApi(request, response, route, publicPath) {
       return;
     }
     if (!enforceRateLimit(request, response, publicPath)) return;
-    forwardUpstream(request, response, route, Buffer.from(JSON.stringify(route.channel === 'advanced' ? payload : buildUpstreamPayload(route, payload))));
+    forwardUpstream(request, response, route, Buffer.from(JSON.stringify(['advanced', 'premium'].includes(route.channel) ? payload : buildUpstreamPayload(route, payload))));
   });
 }
 
@@ -520,6 +541,7 @@ async function invokePartnerProvider(channel, name, payload) {
   const route = apiRoutes.get(`/api-proxy/${channel}/${name}`);
   if (!route) throw new Error('Unsupported route');
   if (route.method === 'POST' && validateProxyPayload(route, payload)) throw new Error('Invalid payload');
+  if (channel === 'premium') return premium.handle(route, payload);
   if (channel === 'advanced') return advanced.handle(route, payload);
   const provider = getProvider(channel);
   const controller = new AbortController();

@@ -214,6 +214,11 @@ select:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(207,111,79
 .session-wrap textarea { height: 145px; padding: 14px 64px 14px 14px; margin: 0; }
 .session-wrap button { position: absolute; right: 9px; top: 9px; min-width: 48px; min-height: 44px; border: 1px solid #ddd5cb; border-radius: 8px; padding: 0 10px; color: var(--green-dark); background: #fffaf4; cursor: pointer; font-size: 12px; font-weight: 600; }
 .session-note { margin-bottom: 15px; }
+.premium-account-fields { display: grid; gap: 8px; margin-bottom: 16px; }
+.premium-account-fields label { margin: 0; }
+.premium-account-fields input { width: 100%; min-height: 49px; padding: 0 13px; border: 1px solid #d9d2c8; border-radius: 10px; color: var(--ink); background: #fffdf9; font-size: 16px; }
+.premium-account-fields input:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.premium-account-fields .field-note { margin: 1px 0 5px; }
 
 .result-section { text-align: center; padding: 14px 0 4px; }
 .result-icon { width: 62px; height: 62px; margin: 0 auto 12px; display: grid; place-items: center; color: #b87534; }
@@ -412,7 +417,7 @@ body[data-recharge-channel="advanced"] .queue-live-action { flex-wrap: wrap; whi
   .hero { margin-top: 12px; margin-bottom: 60px; }
   .hero-copy { padding: 20px 16px 12px; border-radius: 18px; }
   .channel-switcher { top: -25px; min-height: 50px; }
-  .channel-choice { min-width: 106px; min-height: 44px; padding-inline: 14px; }
+  .channel-choice { min-width: 92px; min-height: 44px; padding-inline: 10px; }
   .hero h1 { min-width: 0; font-size: 30px; white-space: nowrap; }
   .hero h1 .hero-title-accent { display: block; margin-top: 4px; }
   .hero-title-row { top: 28px; }

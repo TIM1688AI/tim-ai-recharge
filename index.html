@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260908-48" />
+    <link rel="stylesheet" href="./styles.css?v=20260919-1" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -33,6 +33,7 @@
           <div class="channel-switcher" role="group" aria-label="选择充值通道">
             <button class="channel-choice active" id="regular-channel" type="button" data-channel="regular" aria-pressed="true">常规充值</button>
             <button class="channel-choice" id="advanced-channel" type="button" data-channel="advanced" aria-pressed="false">进阶充值</button>
+            <button class="channel-choice" id="premium-channel" type="button" data-channel="premium" aria-pressed="false">高阶充值</button>
           </div>
           <div class="hero-trust-stage">
             <p class="hero-handwritten" id="hero-handwritten" aria-label="Hello, Welcome to the Age of AI. Signed Tim.">
@@ -73,7 +74,7 @@
             </div>
             <div class="guide-grid">
               <article><span>01</span><div class="guide-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="15.5" cy="8.5" r="3.5" /><path d="m12.8 11.2-8.3 8.3v-3h-2v-3h3l4.5-4.5" /></svg></div><h3>输入充值卡密</h3><p>输入卡密并完成验证。</p></article>
-              <article><span>02</span><div class="guide-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="m8 6-5 6 5 6M16 6l5 6-5 6M13.5 4 10.5 20" /></svg></div><h3>复制 Session JSON</h3><p><a href="https://chatgpt.com/auth/login" target="_blank" rel="noopener noreferrer">登录 ChatGPT</a>，打开 <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer">Session 页面</a>并复制全部内容。</p></article>
+              <article><span>02</span><div class="guide-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="m8 6-5 6 5 6M16 6l5 6-5 6M13.5 4 10.5 20" /></svg></div><h3 id="guide-target-title">复制 Session JSON</h3><p id="guide-target-copy"><a href="https://chatgpt.com/auth/login" target="_blank" rel="noopener noreferrer">登录 ChatGPT</a>，打开 <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer">Session 页面</a>并复制全部内容。</p></article>
               <article><span>03</span><div class="guide-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" /><path d="m8.3 12.1 2.4 2.4 5-5.2" /></svg></div><h3>跟踪处理进度</h3><p>确认充值账号，提交后自动查看任务状态。</p></article>
             </div>
             <div class="privacy-note guide-assurance-note">
@@ -98,7 +99,7 @@
           <section class="tab-panel active" id="single-panel" role="tabpanel" aria-labelledby="single-tab">
             <ol class="steps" aria-label="充值步骤">
               <li class="active" data-step="1"><b>1</b><span>验证卡密</span></li>
-              <li data-step="2"><b>2</b><span>粘贴 Session</span></li>
+              <li data-step="2"><b>2</b><span id="step-two-label">粘贴 Session</span></li>
               <li data-step="3"><b>3</b><span>跟踪进度</span></li>
             </ol>
 
@@ -169,6 +170,13 @@
                     <button type="button" id="paste-session">粘贴</button>
                   </div>
                   <p class="field-note session-note">内容应以 { 开头并以 } 结尾。</p>
+                </div>
+                <div class="premium-account-fields hidden" id="premium-account-fields">
+                  <label for="premium-account-id">ChatGPT Account ID</label>
+                  <input id="premium-account-id" maxlength="36" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" aria-describedby="premium-account-note" />
+                  <label for="premium-account-confirm">再次输入 Account ID</label>
+                  <input id="premium-account-confirm" maxlength="36" autocomplete="off" spellcheck="false" placeholder="请再次输入并确认" />
+                  <p class="field-note" id="premium-account-note">高阶通道按 Account ID 充值，不需要粘贴 Session。请核对两次输入，本站无法预先查询订阅状态。</p>
                 </div>
                 <button class="primary-btn" id="redeem-btn" type="submit"><span>检查账号并继续</span><b>→</b></button>
               </div>
@@ -365,6 +373,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260908-36" defer></script>
+    <script src="./app.js?v=20260919-1" defer></script>
   </body>
 </html>
