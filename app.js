@@ -384,7 +384,7 @@ function isPlausibleChannelKey(value, channelId = state.activeChannel) {
   return isAdvancedChannel(channelId)
     ? /^(?:TIM(?:5X|20X)?-[A-Z0-9]{11}|[A-Z0-9]{16})$/.test(key)
     : channelId === 'premium'
-      ? /^(?:TIMC-(?:PRO|MAX5)|TIMG-(?:PLUS|PRO5))-[A-Z0-9]+$/.test(key)
+      ? /^(?:TIMC-(?:PRO|MAX5|MAX20)|TIMG-(?:PLUS|PRO5|PRO20))-[A-Z0-9]+$/.test(key)
         && key.length + (key.startsWith('TIMC-') ? 1 : -5) >= 8
         && key.length + (key.startsWith('TIMC-') ? 1 : -5) <= 64
     : isPlausibleKey(key);
@@ -473,6 +473,14 @@ function trapModalFocus(event) {
   return true;
 }
 
+function updateClaudeVerificationNotice() {
+  const visible = state.activeChannel === 'premium' && state.verifiedRedeemType === 'claude_org_id'
+    && $('#single-panel').classList.contains('active')
+    && $('.steps li[aria-current="step"]')?.dataset.step === '2';
+  $('#claude-verification-notice').classList.toggle('hidden', !visible);
+  $('#claude-verification-inline').classList.toggle('hidden', !visible);
+}
+
 function showStep(step) {
   $$('.step-section, .result-section').forEach((section) => {
     section.classList.toggle('hidden', Number(section.dataset.section) !== step);
@@ -483,6 +491,7 @@ function showStep(step) {
     if (Number(item.dataset.step) === step) item.setAttribute('aria-current', 'step');
     else item.removeAttribute('aria-current');
   });
+  updateClaudeVerificationNotice();
 }
 
 function getQueueDisplay(value) {
@@ -692,6 +701,8 @@ function updatePremiumTargetInterface() {
 }
 
 function updateChannelInterface() {
+  $('#claude-verification-notice').classList.add('hidden');
+  $('#claude-verification-inline').classList.add('hidden');
   const channel = getChannel();
   const premium = channel.id === 'premium';
   document.body.dataset.rechargeChannel = channel.id;
@@ -918,6 +929,7 @@ function activateModeTab(tab, { focus = false } = {}) {
     item.tabIndex = active ? 0 : -1;
   });
   $$('.tab-panel').forEach((panel) => panel.classList.toggle('active', panel.id === tab.dataset.panel));
+  updateClaudeVerificationNotice();
   if (focus) tab.focus();
 }
 
@@ -1210,6 +1222,12 @@ function getTaskStatus(task) {
   return { kind: 'processing', label: status ? '处理中' : '等待状态更新', terminal: false };
 }
 
+function getRecordOrganizationId(task, cardKey = task?.cdk_code) {
+  if (task?.premium !== true || !/^TIMC-(?:PRO|MAX5|MAX20)-/.test(normalizeKey(cardKey)) || task.task_status === 'not_found') return null;
+  const value = typeof task.organization_id === 'string' ? task.organization_id.trim().toLowerCase() : '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : '';
+}
+
 function formatDateTime(value) {
   if (!value) return '—';
   const text = String(value).trim();
@@ -1336,7 +1354,11 @@ async function verifyCard() {
     $('#refresh-result').classList.add('hidden');
     $('#refreshed-card-code').textContent = '';
     showStep(2);
-    (channel.id === 'premium' && state.verifiedRedeemType === 'claude_org_id' ? $('#premium-account-id') : $('#session-json')).focus();
+    if (channel.id === 'premium' && state.verifiedRedeemType === 'claude_org_id') {
+      const mobile = window.matchMedia('(max-width: 900px)').matches;
+      if (mobile) $('#claude-verification-inline').scrollIntoView({ block: 'start' });
+      $('#premium-account-id').focus({ preventScroll: mobile });
+    } else (channel.id === 'premium' ? $('#premium-account-id') : $('#session-json')).focus();
     showToast('卡密验证通过');
   } catch (error) {
     showToast(error.message, 'error');
@@ -1529,7 +1551,10 @@ function renderTask(task) {
   if (task.advanced) $('#task-result-copy').textContent = status.kind === 'completed' ? '充值已完成，请返回 ChatGPT 核对订阅。' : '请以查询结果为准；结果未确认前请勿重复充值。需要协助请联系供应商。';
   if (task.advanced) $('#task-result-copy').append(' 离开页面后，可在“充值记录”中输入原卡密查询结果。');
   $('#task-status').textContent = status.label;
-  $('#task-account').textContent = task.premium ? '以提交时确认的充值 ID 为准' : task.account_email ? maskEmail(task.account_email) : '等待识别';
+  const organizationId = getRecordOrganizationId(task, task.cdk_code || state.activeTask?.cardKey);
+  $('#task-account-label').textContent = organizationId === null ? '充值账号' : '组织 ID';
+  $('#task-account').textContent = organizationId !== null ? organizationId || '暂未获取'
+    : task.premium ? '以提交时确认的充值 ID 为准' : task.account_email ? maskEmail(task.account_email) : '等待识别';
   $('#task-plan').textContent = formatRechargeType(task.plan_type || state.activeTask?.planType);
   $('#task-time').textContent = formatDateTime(task.completed_at || task.updated_at || task.created_at);
   const failure = $('#task-failure');
@@ -1660,6 +1685,11 @@ async function refreshActiveTask({ silent = false } = {}) {
   }
 }
 
+function isDefiniteSubmissionRejection(error) {
+  return Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
+    && error.status !== 408 && error.payload?.submission_uncertain !== true;
+}
+
 async function submitRedeem(sessionInfo) {
   const button = $('#redeem-btn');
   if (button.disabled || (!sessionInfo?.sessionJson && !sessionInfo?.accountId)) return;
@@ -1696,6 +1726,10 @@ async function submitRedeem(sessionInfo) {
     if (getChannel(channel).supportsCancel) void discoverTaskCancellation(cardKey);
   } catch (error) {
     if (['advanced', 'premium'].includes(channel)) {
+      if (isDefiniteSubmissionRejection(error)) {
+        showToast(`${error.message}；请核对信息后重新提交`, 'error');
+        return;
+      }
       if (channel === state.activeChannel) activateTask(channel === 'premium'
         ? { premium: true, task_status: 'manual_review', status_label: '提交结果待确认' }
         : { advanced: true, task_status: 'unconfirmed', status_label: '提交结果待确认' }, cardKey, { channel });
@@ -1856,6 +1890,16 @@ function closeBatchResultsModal({ restoreFocus = true } = {}) {
 function createResultMeta(item, status) {
   const meta = document.createElement('div');
   meta.className = 'batch-result-meta';
+  const organizationId = getRecordOrganizationId(item);
+  if (organizationId !== null) {
+    const organization = document.createElement('span');
+    organization.className = 'batch-result-organization';
+    organization.append('组织 ID（Organization ID）：');
+    const value = document.createElement('b');
+    value.textContent = organizationId || '暂未获取';
+    organization.append(value);
+    meta.append(organization);
+  }
   if (item.plan_type) {
     const plan = document.createElement('span');
     plan.append('充值类型：');
@@ -2183,7 +2227,9 @@ if (typeof module !== 'undefined' && module.exports) {
     getQueueErrorDisplay,
     getTaskPollDelay,
     getTaskStatus,
+    getRecordOrganizationId,
     isPlausibleChannelKey,
+    isDefiniteSubmissionRejection,
     isPlausibleKey,
     maskKey,
     mergeTaskResults,

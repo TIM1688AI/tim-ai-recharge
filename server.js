@@ -41,6 +41,8 @@ const staticFiles = new Map([
   ['/app.js', 'app.js'],
   ['/styles.css', 'styles.css'],
   ['/assets/tim-letter-logo-web.png', 'assets/tim-letter-logo-web.png'],
+  ['/assets/claude-verification-guide.png', 'assets/claude-verification-guide.png'],
+  ['/assets/claude-verification-guide-thumb.jpg', 'assets/claude-verification-guide-thumb.jpg'],
 ]);
 
 const routeDefinitions = Object.freeze([
@@ -383,6 +385,7 @@ function forwardUpstream(request, response, route, body) {
     }).catch(error => {
       if (!response.destroyed) sendJson(response, error.status || 502, {
         error: error.publicMessage || '高阶服务暂不可用，请稍后查询结果',
+        ...(error.code === 40900 ? { submission_uncertain: true } : {}),
       });
     });
     return;
@@ -391,8 +394,12 @@ function forwardUpstream(request, response, route, body) {
     const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
     advanced.handle(route, payload).then(result => {
       if (!response.destroyed) sendJson(response, 200, result);
-    }).catch(() => {
-      if (!response.destroyed) sendJson(response, 502, { error: route.routeName === 'create-task' ? '提交未确认，请查询卡密结果；请勿重复提交。如持续异常请联系供应商。' : '进阶服务暂不可用，请稍后重试或联系供应商' });
+    }).catch(error => {
+      if (!response.destroyed) sendJson(response, error.status === 422 ? 422 : 502, {
+        error: error.status === 422 ? error.publicMessage : route.routeName === 'create-task'
+          ? '提交未确认，请查询卡密结果；请勿重复提交。如持续异常请联系供应商。'
+          : '进阶服务暂不可用，请稍后重试或联系供应商',
+      });
     });
     return;
   }

@@ -13,8 +13,8 @@ function normalizeCard(value) {
 }
 
 const CARD_PREFIXES = Object.freeze([
-  ['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'],
-  ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-'],
+  ['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'], ['TIMC-MAX20-', 'CLAUDEMAX20-'],
+  ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-'], ['TIMG-PRO20-', 'PRO20-'],
 ]);
 
 function toSupplierCard(value) {
@@ -147,7 +147,7 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
     };
   }
 
-  async function statusForCard(card) {
+  async function readStatusForCard(card) {
     try {
       return task(card, await call('GET', `/redeem/${idempotencyKey(card)}`));
     } catch (error) {
@@ -155,6 +155,24 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
       if (error.status !== 404) throw error;
       return task(card, await call('POST', '/cards/redeem-status', { card_code: card }));
     }
+  }
+
+  async function statusForCard(card) {
+    if (!toPublicCard(card).startsWith('TIMC-')) return readStatusForCard(card);
+    // Keep this optional lookup parallel so it does not extend the status-query budget.
+    const [result, identity] = await Promise.all([
+      readStatusForCard(card),
+      call('POST', '/cards/query', { code: card }).catch(() => null),
+    ]);
+    // A released/unused card can still carry old customer data. Only attach an ID
+    // when both responses describe an associated, currently processing or successful order.
+    const hasMatchingState = (result.task_status === 'completed' && identity?.status === 'success')
+      || (['pending', 'submitted'].includes(result.task_status) && identity?.status === 'processing');
+    const organizationId = typeof identity?.account_id === 'string' ? identity.account_id.trim().toLowerCase() : '';
+    if (result.task_id.trim() && hasMatchingState && UUID.test(organizationId)) {
+      return { ...result, organization_id: organizationId };
+    }
+    return result;
   }
 
   async function handle(route, payload) {
@@ -174,7 +192,7 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
       const probe = await call('POST', '/cards/probe', { code: card });
       const redeemType = normalizeRedeemType(probe.redeem_type);
       if (probe.valid !== true || probe.status !== 'unused' || !redeemType) {
-        throw Object.assign(new Error('卡密状态已变化，请先查询结果'), { status: 409 });
+        throw Object.assign(new Error('卡密状态已变化，请先查询结果'), { status: 409, publicMessage: '卡密状态已变化，请先查询结果' });
       }
       if (redeemType !== normalizeRedeemType(payload.redeem_type || 'chatgpt_account_id')) {
         throw Object.assign(new Error('兑换类型已变化，请重新验证卡密'), { status: 409, publicMessage: '兑换类型已变化，请重新验证卡密' });

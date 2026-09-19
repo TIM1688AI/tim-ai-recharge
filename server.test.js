@@ -32,6 +32,7 @@ const {
   getQueueErrorDisplay,
   getTaskPollDelay,
   getTaskStatus,
+  getRecordOrganizationId,
   isPlausibleChannelKey,
   isPlausibleKey,
   maskKey,
@@ -42,6 +43,20 @@ const {
 } = require('./app');
 
 const TEST_CDK = 'TIM-Ai_2026-X7p9';
+test('组织 ID 仅用于高阶 Claude 记录，缺失不猜测，GPT 与无记录不显示', () => {
+  const id = '123e4567-e89b-42d3-a456-426614174000';
+  const task = { premium: true, cdk_code: 'TIMC-PRO-TESTONLY', task_status: 'completed', organization_id: id.toUpperCase() };
+  assert.equal(getRecordOrganizationId(task), id);
+  assert.equal(getRecordOrganizationId({ ...task, organization_id: null, account_id: id }), '');
+  assert.equal(getRecordOrganizationId({ ...task, organization_id: '<script>alert(1)</script>' }), '');
+  assert.equal(getRecordOrganizationId({ ...task, premium: false }), null);
+  assert.equal(getRecordOrganizationId({ ...task, cdk_code: 'TIMG-PLUS-TESTONLY' }), null);
+  assert.equal(getRecordOrganizationId({ ...task, task_status: 'not_found' }), null);
+  assert.equal(getRecordOrganizationId({ premium: true }, 'TIMC-MAX5-TESTONLY'), '');
+  assert.equal(getRecordOrganizationId({ ...task, cdk_code: 'TIMC-MAX20-TESTONLY' }), id.toLowerCase());
+  assert.equal(getRecordOrganizationId({ ...task, cdk_code: 'TIMG-PRO20-TESTONLY' }), null);
+  assert.equal(getRecordOrganizationId(null), null);
+});
 const SECOND_CDK = 'SHORT-123456';
 const ADVANCED_CDK = 'TIM-ABCDEFGHIJK';
 const SESSION = JSON.stringify({

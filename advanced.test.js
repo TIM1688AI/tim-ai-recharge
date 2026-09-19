@@ -18,6 +18,16 @@ test('advanced display distinguishes unused, missing and uncertain results', () 
   assert.equal(getTaskStatus(taskResult({ status: 'used' }, 'JZ-ABCDEFGHIJK')).terminal, false);
 });
 
+test('submission errors distinguish a definite rejection from an uncertain result', () => {
+  const { isDefiniteSubmissionRejection } = require('./app');
+  for (const status of [400, 401, 403, 409, 422, 429]) {
+    assert.equal(isDefiniteSubmissionRejection({ status }), true);
+  }
+  for (const error of [{}, { status: 408 }, { status: 502 }, { status: 409, payload: { submission_uncertain: true } }]) {
+    assert.equal(isDefiniteSubmissionRejection(error), false);
+  }
+});
+
 test('advanced formats and conservative status mapping', () => {
   for (const tier of ['', '5X', '20X']) assert.equal(supplierCode(`TIM${tier}-ABCDEFGHIJK`), `JZ${tier}-ABCDEFGHIJK`);
   assert.equal(supplierCode('ABCD1234EFGH5678'), 'ABCD1234EFGH5678');
@@ -55,7 +65,8 @@ test('advanced API payloads, memory concurrent guard and refusal', async t => {
   assert.equal(calls.filter(c => c.path === '/api/redeem').length, 1);
   assert.deepEqual(calls.find(c => c.path === '/api/redeem').body, { key: payload.cdk_code, session: payload.session_json });
   allowed = false;
-  await assert.rejects(handle({ routeName: 'create-task' }, { ...payload, cdk_code: 'TIM-ABCDEFGHIJK' }));
+  await assert.rejects(handle({ routeName: 'create-task' }, { ...payload, cdk_code: 'TIM-ABCDEFGHIJK' }), error =>
+    error.status === 422 && /资格检查/.test(error.publicMessage));
   const result = await handle({ routeName: 'lookup/tasks' }, { codes: ['TIM-ABCDEFGHIJK'] });
   assert.equal(result.tasks[0].task_status, 'unconfirmed');
   assert.equal(result.tasks[0].cdk_code, 'TIM-ABCDEFGHIJK');
@@ -70,6 +81,12 @@ test('advanced API payloads, memory concurrent guard and refusal', async t => {
     assert.equal((await response.json()).valid, true);
     assert.equal(calls.at(-1).path, '/api/verify-key');
     assert.equal(calls.at(-1).body.key, 'JZ20X-ABCDEFGHIJK');
+    const refused = await originalFetch(`http://127.0.0.1:${server.address().port}/api-proxy/advanced/create-task`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cdk_code: 'TIM-ABCDEFGHIJK', session_json: payload.session_json }),
+    });
+    assert.equal(refused.status, 422);
+    assert.match((await refused.json()).error, /资格检查/);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 

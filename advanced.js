@@ -81,7 +81,11 @@ async function handle(route, payload = {}) {
   if (name === 'create-task') {
     // Recheck immediately before submission; never rely on browser eligibility.
     const check = await call('check-session', { session: payload.session_json });
-    if (check.success !== true || check.valid !== true || check.can_redeem !== true || check.is_team !== false) throw new Error('当前账号未通过充值资格检查，请重新检查账号');
+    if (check.success !== true || check.valid !== true || check.can_redeem !== true || check.is_team !== false) {
+      throw Object.assign(new Error('当前账号未通过充值资格检查，请重新检查账号'), {
+        status: 422, publicMessage: '当前账号未通过充值资格检查，请重新检查账号',
+      });
+    }
     const finish = claim(payload.cdk_code);
     if (!finish) return taskResult({ status: 'unknown' }, key);
     let confirmed = false;

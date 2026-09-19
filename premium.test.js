@@ -18,8 +18,11 @@ const route = (routeName) => ({ routeName });
 const envelope = (data, code = 0) => ({ ok: code === 0, status: code === 0 ? 200 : 404,
   text: async () => JSON.stringify({ code, message: code === 0 ? 'ok' : 'missing', data }) });
 
-test('四类品牌卡覆盖验证、提交、单查和批查，拒绝全部旧格式', async () => {
-  for (const [prefix, original] of [['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'], ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-']]) {
+test('六类品牌卡覆盖验证、提交、单查和批查，拒绝全部旧格式', async () => {
+  for (const [prefix, original] of [
+    ['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'], ['TIMC-MAX20-', 'CLAUDEMAX20-'],
+    ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-'], ['TIMG-PRO20-', 'PRO20-'],
+  ]) {
     const card = prefix + 'TEST123456789ABC';
     const raw = original + 'TEST123456789ABC';
     const type = prefix.startsWith('TIMC') ? 'claude_org_id' : 'chatgpt_account_id';
@@ -134,7 +137,8 @@ test('不支持的兑换类型和非 unused 卡密不能发送兑换', async () 
   ]) {
     const calls = [];
     const api = createPremiumApi({ getKey: () => 'fake', fetchImpl: async (url) => { calls.push(String(url)); return envelope(data); } });
-    await assert.rejects(api.handle(route('create-task'), { cdk_code: CARD, account_id: ACCOUNT, account_confirm: ACCOUNT }));
+    await assert.rejects(api.handle(route('create-task'), { cdk_code: CARD, account_id: ACCOUNT, account_confirm: ACCOUNT }), error =>
+      error.status === 409 && typeof error.publicMessage === 'string' && error.publicMessage.length > 0);
     assert.equal(calls.length, 1);
     assert.ok(calls[0].endsWith('/cards/probe'));
   }
@@ -162,5 +166,152 @@ test('ChatGPT 和 Claude 及文档别名按供应商类型兑换，拒绝目标�
     await assert.rejects(api.handle(route('create-task'), { ...input,
       redeem_type: canonical === 'claude_org_id' ? 'chatgpt_account_id' : 'claude_org_id' }), /类型已变化/);
     assert.equal(posts.length, 1);
+  }
+});
+
+test('Claude 单查并行补取组织 ID，只输出有效组织字段', { timeout: 1000 }, async () => {
+  for (const prefix of ['TIMC-PRO-', 'TIMC-MAX5-', 'TIMC-MAX20-']) {
+    const card = prefix + 'MOCKIDENTITY123';
+    const calls = [];
+    let identityStarted;
+    const identityReady = new Promise(resolve => { identityStarted = resolve; });
+    const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async (url, options) => {
+      const path = new URL(url).pathname;
+      calls.push({ path, method: options.method, body: options.body && JSON.parse(options.body) });
+      if (path.endsWith('/cards/query')) {
+        identityStarted();
+        return envelope({ status: 'success', account_id: ` ${ACCOUNT.toUpperCase()} `, email: 'private@example.com' });
+      }
+      assert.match(path, /\/redeem\/redeem-/);
+      await identityReady;
+      return envelope({ status: 'success', order_no: 'MOCK-ORDER', account_id: 'do-not-forward', email: 'private@example.com' });
+    } });
+    const result = await api.handle(route('redeem-status'), { cdk_code: card });
+    assert.equal(result.organization_id, ACCOUNT);
+    assert.equal(result.task_status, 'completed');
+    assert.equal(result.task_id, 'MOCK-ORDER');
+    assert.equal(result.cdk_code, card);
+    assert.equal(Object.hasOwn(result, 'account_id'), false);
+    assert.equal(Object.hasOwn(result, 'email'), false);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.find(call => call.path.endsWith('/cards/query')), {
+      path: '/api/agent/v1/cards/query', method: 'POST', body: { code: toSupplierCard(card) },
+    });
+  }
+});
+
+test('Claude 原请求不存在时保留卡密状态回退并补取组织 ID', async () => {
+  const card = 'TIMC-PRO-MOCKFALLBACK123';
+  const paths = [];
+  const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async (url, options) => {
+    const path = new URL(url).pathname;
+    paths.push(path);
+    if (path.includes('/redeem/')) return envelope(null, 40400);
+    if (path.endsWith('/cards/redeem-status')) {
+      assert.deepEqual(JSON.parse(options.body), { card_code: toSupplierCard(card) });
+      return envelope({ status: 'success', order_no: 'MOCK-FALLBACK' });
+    }
+    assert.equal(path, '/api/agent/v1/cards/query');
+    return envelope({ status: 'success', account_id: ACCOUNT });
+  } });
+  const result = await api.handle(route('redeem-status'), { cdk_code: card });
+  assert.equal(result.organization_id, ACCOUNT);
+  assert.equal(result.task_status, 'completed');
+  assert.equal(result.task_id, 'MOCK-FALLBACK');
+  assert.equal(paths.length, 3);
+  assert.equal(paths.filter(path => path.endsWith('/cards/redeem-status')).length, 1);
+});
+
+test('Claude 批查逐卡绑定组织 ID，混合 GPT 卡不发身份查询且不返回 ID', async () => {
+  const claudeCards = ['TIMC-PRO-MOCKBATCHONE123', 'TIMC-MAX5-MOCKBATCHTWO123', 'TIMC-MAX20-MOCKBATCHTHREE123'];
+  const gptCards = ['TIMG-PLUS-MOCKBATCHGPT123', 'TIMG-PRO5-MOCKBATCHGPT456', 'TIMG-PRO20-MOCKBATCHGPT789'];
+  const secondAccount = '987e6543-e21b-43d3-a456-426614174999';
+  const thirdAccount = '456e7890-e21b-43d3-a456-426614174999';
+  const identities = new Map(claudeCards.map((card, index) => [toSupplierCard(card), [ACCOUNT, secondAccount, thirdAccount][index]]));
+  const queried = [];
+  const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async (url, options) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/cards/query')) {
+      const { code } = JSON.parse(options.body);
+      queried.push(code);
+      assert.equal(identities.has(code), true);
+      return envelope({ status: 'success', account_id: identities.get(code), email: 'private@example.com' });
+    }
+    assert.match(path, /\/redeem\/redeem-/);
+    return envelope({ status: 'success', order_no: 'MOCK-ORDER', organization_id: ACCOUNT, account_id: ACCOUNT });
+  } });
+  const result = await api.handle(route('lookup/tasks'), { codes: [...claudeCards, ...gptCards, claudeCards[0].toLowerCase()] });
+  assert.equal(result.tasks.length, 6);
+  assert.deepEqual(result.tasks.slice(0, 3).map(task => task.organization_id), [ACCOUNT, secondAccount, thirdAccount]);
+  for (const task of result.tasks) {
+    assert.equal(task.task_status, 'completed');
+    assert.equal(Object.hasOwn(task, 'account_id'), false);
+    assert.equal(Object.hasOwn(task, 'email'), false);
+  }
+  for (const task of result.tasks.slice(3)) assert.equal(Object.hasOwn(task, 'organization_id'), false);
+  assert.deepEqual(queried.sort(), [...identities.keys()].sort());
+  for (const card of gptCards) {
+    assert.equal(Object.hasOwn(await api.handle(route('redeem-status'), { cdk_code: card }), 'organization_id'), false);
+  }
+  assert.equal(queried.length, 3);
+});
+
+test('Claude 无效、无关联或状态不一致时不显示组织 ID，补查异常保留订单结果', async () => {
+  for (const accountId of [undefined, null, '', 'not-a-uuid', ACCOUNT + 'x', 123, {}, [ACCOUNT]]) {
+    const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async url => {
+      if (String(url).endsWith('/cards/query')) return envelope({ status: 'success', account_id: accountId, email: 'private@example.com' });
+      return envelope({ status: 'success', order_no: 'MOCK-ORDER' });
+    } });
+    const result = await api.handle(route('redeem-status'), { cdk_code: 'TIMC-PRO-MOCKMISSING123' });
+    assert.equal(result.task_status, 'completed');
+    assert.equal(Object.hasOwn(result, 'organization_id'), false);
+    assert.equal(Object.hasOwn(result, 'account_id'), false);
+    assert.equal(Object.hasOwn(result, 'email'), false);
+  }
+  for (const [status, identityStatus, orderNo, allowed] of [
+    ['pending', 'processing', 'MOCK-ORDER', true],
+    ['processing', 'processing', 'MOCK-ORDER', true],
+    ['success', 'success', 'MOCK-ORDER', true],
+    ['success', 'unused', 'MOCK-ORDER', false],
+    ['success', 'invalid', 'MOCK-ORDER', false],
+    ['success', 'unknown', 'MOCK-ORDER', false],
+    ['success', 'processing', 'MOCK-ORDER', false],
+    ['processing', 'success', 'MOCK-ORDER', false],
+    ['success', 'success', undefined, false],
+    ['success', 'success', '   ', false],
+    ['unused', 'success', undefined, false],
+    ['invalid', 'success', undefined, false],
+    ['failed', 'success', 'MOCK-ORDER', false],
+    ['review', 'processing', 'MOCK-ORDER', false],
+    ['unknown', 'processing', 'MOCK-ORDER', false],
+  ]) {
+    const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async url => envelope(
+      String(url).endsWith('/cards/query')
+        ? { status: identityStatus, account_id: ACCOUNT }
+        : { status, order_no: orderNo },
+    ) });
+    const result = await api.handle(route('redeem-status'), { cdk_code: 'TIMC-PRO-MOCKSTATE123' });
+    assert.equal(Object.hasOwn(result, 'organization_id'), allowed, `${status}/${identityStatus}/${orderNo}`);
+    if (allowed) assert.equal(result.organization_id, ACCOUNT);
+    if (status === 'failed') assert.equal(result.task_status, 'failed');
+    if (['invalid', 'unused'].includes(status)) assert.equal(result.task_status, 'not_found');
+  }
+  const failures = [
+    async () => { throw Object.assign(new Error('mock timeout'), { name: 'AbortError' }); },
+    async () => ({ ok: false, status: 503, text: async () => JSON.stringify({ code: 50000 }) }),
+    async () => ({ ok: true, status: 200, text: async () => '{' }),
+  ];
+  for (const [status, expectedStatus] of [['success', 'completed'], ['failed', 'failed'], ['review', 'manual_review']]) {
+    for (const fail of failures) {
+      const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async url => {
+        if (String(url).endsWith('/cards/query')) return fail();
+        return envelope({ status, order_no: 'MOCK-ORDER', stop_polling: status === 'review' });
+      } });
+      const result = await api.handle(route('redeem-status'), { cdk_code: 'TIMC-PRO-MOCKERROR123' });
+      assert.equal(result.task_status, expectedStatus);
+      assert.equal(result.task_id, 'MOCK-ORDER');
+      assert.equal(result.stop_polling, status === 'review');
+      assert.equal(Object.hasOwn(result, 'organization_id'), false);
+    }
   }
 });
