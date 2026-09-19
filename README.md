@@ -2,13 +2,17 @@
 
 ## 高阶充值（代理 API v1）
 
+GPT 高阶充值默认在浏览器粘贴 Session JSON，只读取 `account.id`（36 位 UUID）以及可选的 `user.email` 用于确认弹窗。解析成功后立即清空原 Session，提交到本站及供应商的仍只有卡密、ID 和兑换类型，不发送 Session 或令牌，不用 `user.id` 代替账号 ID。缺少有效 `account.id` 时可重新获取或切换为手动填写两次 ID。邮箱未独立验证，不代表订阅资格检查。Claude 继续填写 Organization ID。
+
 当前版本每张卡只使用一个稳定幂等号。订单失败后，本版本不提供“换新幂等号重新兑换”操作；须先联系供应商核对后处理。这是当前实现的限制，不能通过更换 Key 来重试。批量结果查询上限为 20 张，逐卡读取最近订单，避免将单纯的 `unused` 卡状态误当作失败订单已可再次充值。
 
 第三通道“高阶充值”仅使用供应商 Key 已授权的 `cards:read` 与 `cards:redeem` 能力。服务端调用 `/api/agent/v1/cards/probe` 验证卡密、`/cards/redeem` 兑换，并通过 `/redeem/:idempotency_key` 查询原请求；找不到原请求时才回退 `/cards/redeem-status`。不调用购卡、商品列表或需要订单查询 token 的接口。
 
 在 Node 托管平台的服务端环境变量中配置 `AGENT_API_KEY`（真实值只在平台密钥配置中填写）以及可选的 `AGENT_API_BASE_URL`。后者默认 `https://www.vip555ai.com`，必须是 HTTPS 站点根地址；此前供应商若指定了其他有效 API 域名，可覆盖它。浏览器只请求本站的同源 `/api-proxy/premium/*`，Key 只由服务端放入 `X-Agent-API-Key` 请求头。缺少 Key 时本通道返回明确的未配置提示，不影响常规和进阶通道。
 
-高阶通道按卡密验证返回的 `redeem_type` 自动识别 ChatGPT 与 Claude：`chatgpt_account_id` 填写 36 位 ChatGPT Account ID，`claude_org_id` 填写 36 位 Claude Organization ID，均须输入两次并确认。兼容文档中的 `account_id`、`claude_org`、`organization_id` 别名，提交时统一使用规范值；服务端会再次验证卡密并核对兑换类型，防止目标类型错配。Session JSON 等其他类型暂不支持。高阶通道没有订阅预检 API，不能预先保证覆盖资格。卡密前缀不做 TIM 改写，因为文档未定义此通道的前缀规则。提交请求使用从服务端 Key 与卡密派生的稳定幂等号；未知、处理中和复核状态只查询，不自动创建新订单。更换 `AGENT_API_KEY` 后幂等号会变化，因此轮换密钥前应先核对未完成订单，并以卡密状态继续追踪。
+高阶通道按卡密验证返回的 `redeem_type` 自动识别 ChatGPT 与 Claude：`chatgpt_account_id` 填写 36 位 ChatGPT Account ID，`claude_org_id` 填写 36 位 Claude Organization ID，均须输入两次并确认。兼容文档中的 `account_id`、`claude_org`、`organization_id` 别名，提交时统一使用规范值；服务端会再次验证卡密并核对兑换类型，防止目标类型错配。Session JSON 等其他类型暂不支持。高阶通道没有订阅预检 API，不能预先保证覆盖资格。提交请求使用从服务端 Key 与还原后的供应商卡密派生的稳定幂等号；未知、处理中和复核状态只查询，不自动创建新订单。更换 `AGENT_API_KEY` 后幂等号会变化，因此轮换密钥前应先核对未完成订单，并以卡密状态继续追踪。
+
+高阶卡密只接受新的品牌格式，前后端同时拒绝供应商原始格式（包括查询）。服务端精确映射 `TIMC-PRO-` → `CLAUDEPRO-`、`TIMC-MAX5-` → `CLAUDEMAX5-`、`TIMG-PLUS-` → `PLUS-`、`TIMG-PRO5-` → `PRO5-`，字母数字后缀保持不变；输入去空白并转大写。供应商侧长度仍须为 8–64 位，不擅自固定后缀长度。验证、提交、单卡和批量查询使用同一映射，返回页面的卡密恢复为品牌格式。旧订单未删除，用对应的新格式仍可查到原订单，原格式入口已关闭。常规、进阶通道不受影响。
 
 请关闭托管平台的请求体日志与敏感数据采集。本站不记录或公开供应商返回的原始邮箱、Account ID、完整 Key 或卡密。上线前仍需使用供应商授权的测试卡与实际 Key 完成端到端验收；本地模拟测试不代表生产连通。不要把 Key 写入 `.env` 后提交到 Git。
 

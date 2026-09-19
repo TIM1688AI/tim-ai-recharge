@@ -1,12 +1,57 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createPremiumApi, validate } = require('./premium');
+const { createPremiumApi, validate, toSupplierCard, toPublicCard } = require('./premium');
+const { createHmac } = require('crypto');
+const { isPlausibleChannelKey, extractPremiumSessionTarget } = require('./app');
 
-const CARD = 'EXAMPLE123456';
+const CARD = 'TIMG-PLUS-EXAMPLE123456';
 const ACCOUNT = '123e4567-e89b-42d3-a456-426614174000';
+test('高阶 Session 只提取 account.id 和核对邮箱，不保留令牌，不使用 user.id', () => {
+  const extracted = extractPremiumSessionTarget(JSON.stringify({ account: { id: ACCOUNT }, user: { id: 'other', email: 'test@example.com' }, accessToken: 'TEST-SECRET-TOKEN', sessionToken: 'TEST-COOKIE' }));
+  assert.deepEqual(extracted, { accountId: ACCOUNT, email: 'test@example.com' });
+  for (const value of ['', '{', 'null', '[]', JSON.stringify({ user: { id: ACCOUNT } }), JSON.stringify({ account: { id: 'invalid' } })]) {
+    assert.throws(() => extractPremiumSessionTarget(value));
+  }
+  assert.throws(() => extractPremiumSessionTarget('x'.repeat(256 * 1024 + 1)), /过大/);
+});
 const route = (routeName) => ({ routeName });
 const envelope = (data, code = 0) => ({ ok: code === 0, status: code === 0 ? 200 : 404,
   text: async () => JSON.stringify({ code, message: code === 0 ? 'ok' : 'missing', data }) });
+
+test('四类品牌卡覆盖验证、提交、单查和批查，拒绝全部旧格式', async () => {
+  for (const [prefix, original] of [['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'], ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-']]) {
+    const card = prefix + 'TEST123456789ABC';
+    const raw = original + 'TEST123456789ABC';
+    const type = prefix.startsWith('TIMC') ? 'claude_org_id' : 'chatgpt_account_id';
+    assert.equal(toSupplierCard(card), raw);
+    assert.equal(toPublicCard(raw), card);
+    assert.equal(isPlausibleChannelKey(card, 'premium'), true);
+    assert.equal(isPlausibleChannelKey(raw, 'premium'), false);
+    const calls = [];
+    const api = createPremiumApi({ getKey: () => 'fake', fetchImpl: async (url, options) => {
+      calls.push({ path: new URL(url).pathname, body: options.body && JSON.parse(options.body) });
+      if (String(url).includes('/redeem/')) return envelope(null, 40400);
+      if (String(url).endsWith('/cards/probe')) return envelope({ valid: true, status: 'unused', redeem_type: type });
+      if (String(url).endsWith('/cards/redeem')) return envelope({ status: 2, order_no: 'ORDER-TEST' });
+      return envelope({ status: 'success', order_no: 'ORDER-TEST' });
+    } });
+    await api.handle(route('verify-cdk'), { cdk_code: card });
+    const submitted = await api.handle(route('create-task'), { cdk_code: card, account_id: ACCOUNT, account_confirm: ACCOUNT, redeem_type: type });
+    assert.equal(submitted.cdk_code, card);
+    assert.equal((await api.handle(route('redeem-status'), { cdk_code: card })).cdk_code, card);
+    assert.equal((await api.handle(route('lookup/tasks'), { codes: [card, card.toLowerCase()] })).tasks.length, 1);
+    for (const call of calls.filter(call => call.body)) assert.equal(call.body.code || call.body.card_code, raw);
+    const count = calls.length;
+    for (const name of ['verify-cdk', 'create-task', 'redeem-status', 'lookup/tasks']) {
+      await assert.rejects(api.handle(route(name), { cdk_code: raw, codes: [raw], account_id: ACCOUNT, account_confirm: ACCOUNT, redeem_type: type }), /新格式/);
+    }
+    assert.equal(calls.length, count);
+  }
+  for (const card of ['TIMC-OTHER-ABCDEF', 'TIMG-OTHER-ABCDEF', 'TIMC-PRO-', 'TIM-PRO-ABCDEF', 'TIMG-PLUS-X!', 'TIMC-PRO-' + 'X'.repeat(55)]) {
+    assert.equal(toSupplierCard(card), '');
+    assert.equal(isPlausibleChannelKey(card, 'premium'), false);
+  }
+});
 
 test('高阶请求校验拒绝错误账号和超量查询', () => {
   assert.match(validate('create-task', { cdk_code: CARD, account_id: 'bad', account_confirm: 'bad' }), /Account ID/);
@@ -23,7 +68,7 @@ test('验证只接受未使用的 ChatGPT Account ID 卡，密钥只在请求头
   assert.equal((await api.handle(route('verify-cdk'), { cdk_code: CARD })).valid, true);
   assert.equal(calls[0].options.headers['X-Agent-API-Key'], 'test-secret');
   assert.doesNotMatch(calls[0].url, /test-secret|EXAMPLE/);
-  assert.deepEqual(JSON.parse(calls[0].options.body), { code: CARD });
+  assert.deepEqual(JSON.parse(calls[0].options.body), { code: 'PLUS-EXAMPLE123456' });
 });
 
 test('兑换使用同一卡密稳定幂等号，且不回传 Account ID', async () => {
@@ -40,6 +85,7 @@ test('兑换使用同一卡密稳定幂等号，且不回传 Account ID', async 
   assert.equal(result.account_id, undefined);
   assert.equal(redemptions[0].idempotency_key, redemptions[1].idempotency_key);
   assert.match(redemptions[0].idempotency_key, /^redeem-[a-f0-9]{64}$/);
+  assert.equal(redemptions[0].idempotency_key, 'redeem-' + createHmac('sha256', 'test-secret').update('tim-premium-v1:PLUS-EXAMPLE123456').digest('hex'));
 });
 
 test('订单查询优先使用幂等号；不存在时回退卡密状态', async () => {

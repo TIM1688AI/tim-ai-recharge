@@ -8,7 +8,7 @@ const CONFIG = {
   channels: Object.freeze({
     regular: Object.freeze({ id: 'regular', label: '常规充值', supportsRefresh: true, supportsCancel: true, supportsQueueEvents: true, allowsActiveSubscription: false, taskPollSchedule: [5000], cardNote: '常规充值：已有 Plus / Pro 账号无法提交充值，Team 账号暂不支持。', recordsNote: '查询常规充值已提交任务；未提交的有效卡密会显示“暂无提交记录”' }),
     advanced: Object.freeze({ id: 'advanced', label: '进阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [10000, 15000, 30000], cardNote: '进阶充值：支持 TIM 系列卡密，已有会员确认后可覆盖充值，Team 暂不支持。', recordsNote: '查询卡密与充值结果；单次最多 50 个，已使用不等于充值成功' }),
-    premium: Object.freeze({ id: 'premium', label: '高阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [5000, 10000, 15000], cardNote: '高阶充值：支持 ChatGPT / Claude，验证后按提示填写账号或组织 ID。', recordsNote: '输入本通道卡密查询处理结果；单次最多 20 个' }),
+    premium: Object.freeze({ id: 'premium', label: '高阶充值', supportsRefresh: false, supportsCancel: false, supportsQueueEvents: false, allowsActiveSubscription: true, taskPollSchedule: [5000, 10000, 15000], cardNote: '高阶充值：仅支持 TIMC- / TIMG- 卡密，验证后按提示填写账号或组织 ID。', recordsNote: '仅接受 TIMC- / TIMG- 新格式卡密查询；单次最多 20 个' }),
   }),
 };
 
@@ -17,6 +17,7 @@ const state = {
   verifiedCardKey: '',
   verifiedPlan: '',
   verifiedRedeemType: '',
+  premiumManualInput: false,
   refreshRemaining: 0,
   pendingRedeemSession: null,
   activeTask: null,
@@ -70,7 +71,7 @@ function startHandwrittenIntro() {
   const note = $('#hero-handwritten');
   if (!note) return;
   const stage = note.closest('.hero-trust-stage');
-  const signature = $('.hero-signature', stage || document);
+  const handwrittenCopy = $('.hero-handwritten-copy', note);
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let alreadySeen = false;
   try {
@@ -86,7 +87,7 @@ function startHandwrittenIntro() {
   }
   note.classList.add('is-writing');
   stage?.classList.add('is-writing');
-  signature?.addEventListener('animationend', () => {
+  handwrittenCopy?.addEventListener('animationend', () => {
     note.classList.remove('is-writing');
     note.classList.add('is-written');
     stage?.classList.remove('is-writing');
@@ -383,7 +384,9 @@ function isPlausibleChannelKey(value, channelId = state.activeChannel) {
   return isAdvancedChannel(channelId)
     ? /^(?:TIM(?:5X|20X)?-[A-Z0-9]{11}|[A-Z0-9]{16})$/.test(key)
     : channelId === 'premium'
-      ? key.length >= 8 && key.length <= 64 && /^[\x21-\x7e]+$/.test(key)
+      ? /^(?:TIMC-(?:PRO|MAX5)|TIMG-(?:PLUS|PRO5))-[A-Z0-9]+$/.test(key)
+        && key.length + (key.startsWith('TIMC-') ? 1 : -5) >= 8
+        && key.length + (key.startsWith('TIMC-') ? 1 : -5) <= 64
     : isPlausibleKey(key);
 }
 
@@ -644,12 +647,35 @@ function getPremiumTargetLabel(type = state.verifiedRedeemType) {
   return type === 'claude_org_id' ? 'Claude Organization ID' : 'ChatGPT Account ID';
 }
 
+function extractPremiumSessionTarget(value) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('请粘贴完整 Session JSON，或切换为手动填写 ID');
+  if (value.length > 256 * 1024) throw new Error('Session 内容过大，请检查粘贴内容');
+  let session;
+  try { session = JSON.parse(value); } catch { throw new Error('Session JSON 格式不正确，请重新复制完整内容'); }
+  const accountId = typeof session?.account?.id === 'string' ? session.account.id.trim().toLowerCase() : '';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(accountId)) {
+    throw new Error('Session 中缺少有效的 account.id，请重新获取或手动填写；不能使用 user.id');
+  }
+  const email = typeof session?.user?.email === 'string' ? session.user.email.trim().slice(0, 254) : '';
+  return { accountId, email };
+}
+
 function updatePremiumTargetInterface() {
   if (state.activeChannel !== 'premium') return;
   const known = Boolean(state.verifiedRedeemType);
   const claude = state.verifiedRedeemType === 'claude_org_id';
+  const useSession = known && !claude && !state.premiumManualInput;
   const label = getPremiumTargetLabel();
-  $('#step-two-label').textContent = known ? (claude ? '填写组织 ID' : '填写账号 ID') : '填写充值 ID';
+  $('#step-two-label').textContent = known ? (claude ? '填写组织 ID' : useSession ? '粘贴 Session' : '填写账号 ID') : '填写充值 ID';
+  $('.session-guide').classList.toggle('hidden', !useSession);
+  $('.session-field').classList.toggle('hidden', !useSession);
+  $('#premium-account-fields').classList.toggle('hidden', useSession);
+  $('#premium-input-toggle').classList.toggle('hidden', !known || claude);
+  $('#premium-input-toggle').textContent = useSession ? '改为手动填写 Account ID' : '改为粘贴 Session 自动识别';
+  $('#organization-help-toggle').classList.toggle('hidden', !claude);
+  $('#organization-help-toggle').setAttribute('aria-expanded', String(claude));
+  $('#organization-help').classList.toggle('hidden', !claude);
+  $('.session-note').textContent = useSession ? '仅在浏览器内提取 account.id，完整 Session 不会发送。缺少账号 ID 时可手动填写。' : '内容应以 { 开头并以 } 结尾。';
   $('label[for="premium-account-id"]').textContent = label;
   $('label[for="premium-account-confirm"]').textContent = `再次输入${claude ? ' Organization ID' : ' Account ID'}`;
   $('#premium-account-note').textContent = `本卡按 ${label} 充值。请核对两次输入，本站无法预先查询订阅状态。`;
@@ -658,6 +684,11 @@ function updatePremiumTargetInterface() {
     ? `填写目标${claude ? ' Claude 组织' : ' ChatGPT 账号'}的 36 位 ${claude ? 'Organization ID' : 'Account ID'}，输入两次后再提交。`
     : '验证后按提示填写 ChatGPT Account ID 或 Claude Organization ID，并再次确认。';
   $('.recharge-shell > .privacy-note b').textContent = '浏览器端不保存充值 ID';
+  if (useSession) {
+    $('#guide-target-title').textContent = '粘贴 Session 自动识别';
+    $('#guide-target-copy').textContent = '登录目标 ChatGPT 账号后获取 Session JSON，粘贴并核对识别出的账号 ID。';
+    $('.recharge-shell > .privacy-note b').textContent = 'Session 仅在浏览器内解析';
+  }
 }
 
 function updateChannelInterface() {
@@ -685,6 +716,11 @@ function updateChannelInterface() {
   $('#premium-account-fields').classList.toggle('hidden', !premium);
   $('.session-guide').classList.toggle('hidden', premium);
   $('.session-field').classList.toggle('hidden', premium);
+  $('#premium-input-toggle').classList.add('hidden');
+  $('#organization-help-toggle').classList.add('hidden');
+  $('#organization-help-toggle').setAttribute('aria-expanded', 'false');
+  $('#organization-help').classList.add('hidden');
+  $('.session-note').textContent = '内容应以 { 开头并以 } 结尾。';
   $('#redeem-btn span').textContent = premium ? '核对账号并继续' : '检查账号并继续';
   $('#guide-target-title').textContent = premium ? '确认 Account ID' : '复制 Session JSON';
   if (premium) $('#guide-target-copy').textContent = '在 ChatGPT 账号信息中确认 Account ID，输入两次后再提交。';
@@ -1133,6 +1169,7 @@ function resetRecharge() {
   state.verifiedCardKey = '';
   state.verifiedPlan = '';
   state.verifiedRedeemType = '';
+  state.premiumManualInput = false;
   state.refreshRemaining = 0;
   state.activeTask = null;
   closeAccountConfirmModal({ restoreFocus: false });
@@ -1249,7 +1286,7 @@ async function verifyCard() {
   if (!isPlausibleChannelKey(cardKey, channel.id)) {
     showToast(channel.id === 'advanced'
       ? '请输入 TIM 系列卡密或 16 位年度卡密'
-      : channel.id === 'premium' ? '请输入本通道的 8–64 位卡密' : '请输入 4–128 位有效卡密', 'error');
+      : channel.id === 'premium' ? '高阶充值仅接受 TIMC- / TIMG- 新格式卡密' : '请输入 4–128 位有效卡密', 'error');
     $('#card-key').focus();
     return;
   }
@@ -1278,6 +1315,8 @@ async function verifyCard() {
     if (channel.id === 'premium') {
       if (!['chatgpt_account_id', 'claude_org_id'].includes(result.redeem_type)) throw new Error('卡密兑换类型无法识别，请刷新页面后重新验证');
       state.verifiedRedeemType = result.redeem_type;
+      state.premiumManualInput = false;
+      $('#session-json').value = '';
       $('#premium-account-id').value = '';
       $('#premium-account-confirm').value = '';
       updatePremiumTargetInterface();
@@ -1297,7 +1336,7 @@ async function verifyCard() {
     $('#refresh-result').classList.add('hidden');
     $('#refreshed-card-code').textContent = '';
     showStep(2);
-    (channel.id === 'premium' ? $('#premium-account-id') : $('#session-json')).focus();
+    (channel.id === 'premium' && state.verifiedRedeemType === 'claude_org_id' ? $('#premium-account-id') : $('#session-json')).focus();
     showToast('卡密验证通过');
   } catch (error) {
     showToast(error.message, 'error');
@@ -1313,6 +1352,21 @@ async function prepareRedeem() {
   const generation = state.taskGeneration;
   if (button.disabled) return;
   if (channel.id === 'premium') {
+    let extractedEmail = '';
+    if (state.verifiedRedeemType === 'chatgpt_account_id' && !state.premiumManualInput) {
+      try {
+        const target = extractPremiumSessionTarget($('#session-json').value);
+        $('#premium-account-id').value = target.accountId;
+        $('#premium-account-confirm').value = target.accountId;
+        extractedEmail = target.email;
+        $('#session-json').value = '';
+        state.premiumManualInput = true;
+        updatePremiumTargetInterface();
+      } catch (error) {
+        showToast(error.message, 'error');
+        return;
+      }
+    }
     const accountId = $('#premium-account-id').value.trim().toLowerCase();
     const confirmed = $('#premium-account-confirm').value.trim().toLowerCase();
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(accountId)) {
@@ -1325,7 +1379,8 @@ async function prepareRedeem() {
       $('#premium-account-confirm').focus();
       return;
     }
-    openAccountConfirmModal({ accountId, accountLabel: accountId, redeemType: state.verifiedRedeemType, confirmedCard, confirmedChannel: channel.id });
+    openAccountConfirmModal({ accountId, accountLabel: extractedEmail ? `${extractedEmail}\n${accountId}` : accountId, redeemType: state.verifiedRedeemType, confirmedCard, confirmedChannel: channel.id });
+    if (extractedEmail) $('#account-confirm-note').append(' 邮箱来自粘贴内容，仅供核对，未经独立验证。');
     return;
   }
   let sessionInfo;
@@ -1929,6 +1984,22 @@ function retryFailedTask() {
 }
 
 function bindEvents() {
+  $('#organization-help-toggle').addEventListener('click', () => {
+    if (state.activeChannel !== 'premium' || state.verifiedRedeemType !== 'claude_org_id') return;
+    const expanded = $('#organization-help-toggle').getAttribute('aria-expanded') !== 'true';
+    $('#organization-help-toggle').setAttribute('aria-expanded', String(expanded));
+    $('#organization-help').classList.toggle('hidden', !expanded);
+  });
+  $('#premium-input-toggle').addEventListener('click', () => {
+    if (state.activeChannel !== 'premium' || state.verifiedRedeemType !== 'chatgpt_account_id') return;
+    state.premiumManualInput = !state.premiumManualInput;
+    $('#session-json').value = '';
+    $('#premium-account-id').value = '';
+    $('#premium-account-confirm').value = '';
+    clearPendingRedeemSession();
+    updatePremiumTargetInterface();
+    (state.premiumManualInput ? $('#premium-account-id') : $('#session-json')).focus();
+  });
   $$('.channel-choice').forEach((button) => {
     button.addEventListener('click', () => requestChannelChange(button.dataset.channel, button));
   });
@@ -2098,6 +2169,7 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    extractPremiumSessionTarget,
     getStockLevel,
     getStockLabel,
     buildCreateTaskPayload,

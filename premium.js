@@ -12,17 +12,38 @@ function normalizeCard(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, '').toUpperCase() : '';
 }
 
-function isCard(value) {
-  return typeof value === 'string' && value.length >= 8 && value.length <= 64 && /^[\x21-\x7e]+$/.test(value);
+const CARD_PREFIXES = Object.freeze([
+  ['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'],
+  ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-'],
+]);
+
+function toSupplierCard(value) {
+  const card = normalizeCard(value);
+  for (const [publicPrefix, supplierPrefix] of CARD_PREFIXES) {
+    if (!card.startsWith(publicPrefix)) continue;
+    const suffix = card.slice(publicPrefix.length);
+    const supplier = supplierPrefix + suffix;
+    if (/^[A-Z0-9]+$/.test(suffix) && supplier.length >= 8 && supplier.length <= 64) return supplier;
+  }
+  return '';
 }
+
+function toPublicCard(card) {
+  for (const [publicPrefix, supplierPrefix] of CARD_PREFIXES) {
+    if (card.startsWith(supplierPrefix)) return publicPrefix + card.slice(supplierPrefix.length);
+  }
+  return '';
+}
+
+function isCard(value) { return Boolean(toSupplierCard(value)); }
 
 function validate(routeName, payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '请求体必须是 JSON 对象';
   if (routeName === 'verify-cdk' || routeName === 'redeem-status') {
-    return isCard(normalizeCard(payload.cdk_code)) ? null : '卡密须为 8–64 位字符';
+    return isCard(payload.cdk_code) ? null : '高阶充值仅接受 TIMC- / TIMG- 新格式卡密';
   }
   if (routeName === 'create-task') {
-    if (!isCard(normalizeCard(payload.cdk_code))) return '卡密须为 8–64 位字符';
+    if (!isCard(payload.cdk_code)) return '高阶充值仅接受 TIMC- / TIMG- 新格式卡密';
     if (!normalizeRedeemType(payload.redeem_type || 'chatgpt_account_id')) return '不支持的兑换类型';
     if (!UUID.test(String(payload.account_id || ''))) return 'Account ID 或 Organization ID 须为 36 位 UUID';
     if (payload.account_id !== payload.account_confirm) return '两次填写的 ID 不一致';
@@ -31,7 +52,7 @@ function validate(routeName, payload) {
   if (routeName === 'lookup/tasks') {
     return Array.isArray(payload.codes) && payload.codes.length >= 1 && payload.codes.length <= 20
       && payload.codes.every((code) => isCard(normalizeCard(code)))
-      ? null : '请提交 1–20 个有效卡密';
+      ? null : '请提交 1–20 个 TIMC- / TIMG- 新格式卡密';
   }
   return '不支持的高阶接口';
 }
@@ -113,14 +134,14 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
       invalid: 'not_found', used: 'manual_review', disabled: 'manual_review',
     };
     return {
-      premium: true, cdk_code: card, task_id: typeof data?.order_no === 'string' ? data.order_no : '',
+      premium: true, cdk_code: toPublicCard(card), task_id: typeof data?.order_no === 'string' ? data.order_no.replaceAll(card, toPublicCard(card)) : '',
       task_status: mapped[status], status_label: {
         unused: '尚未兑换', pending: '等待处理', processing: '处理中', success: '充值成功',
         failed: '充值失败', review: '人工复核', unknown: '结果待确认',
         invalid: '卡密无效', used: '卡密已使用，结果待确认', disabled: '卡密不可用',
       }[status],
       stop_polling: data?.stop_polling === true,
-      plan_type: typeof data?.product_code === 'string' ? data.product_code : '',
+      plan_type: typeof data?.product_code === 'string' ? data.product_code.replaceAll(card, toPublicCard(card)) : '',
       created_at: data?.submitted_at || null, completed_at: data?.completed_at || null,
       failure_reason: status === 'failed' ? '供应商处理失败，请携卡密联系供应商核对。' : '',
     };
@@ -140,16 +161,16 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
     const validationError = validate(route.routeName, payload);
     if (validationError) throw Object.assign(new Error(validationError), { status: 400 });
     if (route.routeName === 'verify-cdk') {
-      const card = normalizeCard(payload.cdk_code);
+      const card = toSupplierCard(payload.cdk_code);
       const data = await call('POST', '/cards/probe', { code: card });
       if (data.valid !== true) return { valid: false, error: '卡密无效或不属于当前通道' };
       if (data.status !== 'unused') return { valid: false, pending: ['processing', 'used', 'unknown'].includes(data.status), error: '卡密当前不可提交，请查询结果' };
       const redeemType = normalizeRedeemType(data.redeem_type);
       if (!redeemType) return { valid: false, error: '此卡密需要其他兑换目标，当前网站暂不支持' };
-      return { valid: true, plan_type: String(data.product_name || data.product_code || ''), redeem_type: redeemType };
+      return { valid: true, plan_type: String(data.product_name || data.product_code || '').replaceAll(card, toPublicCard(card)), redeem_type: redeemType };
     }
     if (route.routeName === 'create-task') {
-      const card = normalizeCard(payload.cdk_code);
+      const card = toSupplierCard(payload.cdk_code);
       const probe = await call('POST', '/cards/probe', { code: card });
       const redeemType = normalizeRedeemType(probe.redeem_type);
       if (probe.valid !== true || probe.status !== 'unused' || !redeemType) {
@@ -168,11 +189,11 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
       return task(card, { ...data, status });
     }
     if (route.routeName === 'redeem-status') {
-      const card = normalizeCard(payload.cdk_code);
+      const card = toSupplierCard(payload.cdk_code);
       return statusForCard(card);
     }
     if (route.routeName === 'lookup/tasks') {
-      const cards = [...new Set(payload.codes.map(normalizeCard))];
+      const cards = [...new Set(payload.codes.map(toSupplierCard))];
       const tasks = [];
       for (let index = 0; index < cards.length; index += 4) {
         tasks.push(...await Promise.all(cards.slice(index, index + 4).map(statusForCard)));
@@ -185,4 +206,4 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
   return { handle };
 }
 
-module.exports = { createPremiumApi, validate, normalizeCard };
+module.exports = { createPremiumApi, validate, normalizeCard, toSupplierCard, toPublicCard };

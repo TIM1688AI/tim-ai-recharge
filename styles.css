@@ -112,9 +112,7 @@ body.modal-open { overflow: hidden; }
 .hero-handwritten { position: absolute; left: 0; right: 0; top: -24px; bottom: 0; margin: 0; overflow: hidden; pointer-events: none; font-family: "Caveat", "Segoe Print", cursive; }
 .hero-handwritten-copy { position: absolute; left: 50%; top: 48px; z-index: 0; display: block; width: max-content; max-width: none; color: transparent; background: linear-gradient(105deg, rgba(91,74,66,.48) 0 30%, rgba(207,111,79,.92) 43%, rgba(255,249,241,.98) 50%, rgba(207,111,79,.92) 57%, rgba(91,74,66,.48) 70% 100%); background-size: 240% 100%; background-position: 180% 0; -webkit-background-clip: text; background-clip: text; -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0,0,0,.94) 32%, rgba(0,0,0,.56) 66%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0%, rgba(0,0,0,.94) 32%, rgba(0,0,0,.56) 66%, transparent 100%); font-size: clamp(78px, 7.2vw, 96px); font-weight: 500; line-height: 1; letter-spacing: .01em; white-space: nowrap; opacity: .32; transform: translate(-50%, -50%); animation: flowing-handwritten-light 5.5s linear infinite; }
 .hero-handwritten-loading { position: absolute; left: 50%; bottom: -5px; z-index: 3; display: block; color: rgba(61, 91, 77, .72); font: 600 17px/1 "Caveat", "Segoe Print", cursive; letter-spacing: .015em; white-space: nowrap; transform: translateX(-50%) rotate(-1.5deg); }
-.hero-signature { position: absolute; right: 10px; bottom: -10px; z-index: 3; display: block; color: var(--green-dark); font-family: "Caveat", "Segoe Print", cursive; font-size: 30px; font-weight: 600; line-height: 1; transform: rotate(-4deg); transform-origin: center; }
 .hero-handwritten.is-writing .hero-handwritten-copy { clip-path: inset(0 100% 0 0); animation: handwritten-reveal 2.7s cubic-bezier(.16,1,.3,1) .25s forwards, flowing-handwritten-light 5.5s linear infinite; }
-.hero-trust-stage.is-writing .hero-signature { clip-path: inset(0 100% 0 0); animation: handwritten-reveal 1.15s cubic-bezier(.16,1,.3,1) 2.65s forwards; }
 .hero-handwritten:not(.is-ambient-active) .hero-handwritten-copy { animation-play-state: paused; }
 .hero-handwritten.is-ambient-active .hero-handwritten-copy { animation-play-state: running; }
 @keyframes handwritten-reveal { to { clip-path: inset(0 0 0 0); } }
@@ -215,7 +213,18 @@ select:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(207,111,79
 .session-wrap button { position: absolute; right: 9px; top: 9px; min-width: 48px; min-height: 44px; border: 1px solid #ddd5cb; border-radius: 8px; padding: 0 10px; color: var(--green-dark); background: #fffaf4; cursor: pointer; font-size: 12px; font-weight: 600; }
 .session-note { margin-bottom: 15px; }
 .premium-account-fields { display: grid; gap: 8px; margin-bottom: 16px; }
+#premium-input-toggle { margin: 0 0 16px; }
+#confirm-account-value { white-space: pre-line; overflow-wrap: anywhere; }
 .premium-account-fields label { margin: 0; }
+.premium-account-label-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+.organization-help-toggle { min-height: 44px; margin-left: auto; padding: 6px 0 6px 8px; border: 0; background: transparent; color: var(--accent-text); font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.organization-help-toggle:hover { color: var(--green-dark); }
+.organization-help-toggle:focus-visible, .organization-help a:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 3px; border-radius: 3px; }
+.organization-help { padding: 14px 16px; margin: 2px 0 8px; border: 1px solid var(--line); border-radius: 12px; background: #f8f4ed; color: var(--text-secondary); font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.organization-help ol { margin: 0; padding-left: 20px; }
+.organization-help li + li { margin-top: 6px; }
+.organization-help a { display: inline-flex; min-height: 44px; align-items: center; color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; }
+.organization-help-warning { margin: 12px 0 0; color: var(--danger); font-weight: 500; }
 .premium-account-fields input { width: 100%; min-height: 49px; padding: 0 13px; border: 1px solid #d9d2c8; border-radius: 10px; color: var(--ink); background: #fffdf9; font-size: 16px; }
 .premium-account-fields input:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .premium-account-fields .field-note { margin: 1px 0 5px; }
@@ -426,7 +435,6 @@ body[data-recharge-channel="advanced"] .queue-live-action { flex-wrap: wrap; whi
   .hero-handwritten { top: -20px; }
   .hero-handwritten-copy { top: 36px; font-size: 68px; opacity: .29; }
   .hero-handwritten-loading { bottom: -4px; font-size: 15px; }
-  .hero-signature { right: 8px; bottom: -9px; font-size: 27px; }
   .service-layout { margin-top: 14px; }
   .session-guide li { grid-template-columns: 26px minmax(0, 1fr); }
   .session-guide li > a { grid-column: 2; justify-self: start; }
@@ -480,7 +488,7 @@ body[data-recharge-channel="advanced"] .queue-live-action { flex-wrap: wrap; whi
   * { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
   .motion-reveal, .motion-text .motion-unit, .motion-stagger > .motion-item { opacity: 1 !important; filter: none !important; transform: none !important; will-change: auto !important; }
   .hero-handwritten-copy { background-position: 50% 0; }
-  .hero-handwritten.is-writing .hero-handwritten-copy, .hero-trust-stage.is-writing .hero-signature { clip-path: none; }
+  .hero-handwritten.is-writing .hero-handwritten-copy { clip-path: none; }
   .button-loading-dots, .button-loading-dots i { animation: none !important; opacity: .8; transform: none; }
 }
 

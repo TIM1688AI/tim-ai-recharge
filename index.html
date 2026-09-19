@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260919-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260919-6" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -36,11 +36,11 @@
             <button class="channel-choice" id="premium-channel" type="button" data-channel="premium" aria-pressed="false">高阶充值</button>
           </div>
           <div class="hero-trust-stage">
-            <p class="hero-handwritten" id="hero-handwritten" aria-label="Hello, Welcome to the Age of AI. Signed Tim.">
+            <p class="hero-handwritten" id="hero-handwritten" aria-label="Hello, Welcome to the Age of AI.">
               <span class="hero-handwritten-copy" lang="en" data-text="Hello, Welcome to the Age of AI">Hello, Welcome to the Age of AI</span>
             </p>
             <div class="hero-title-row">
-              <h1>ChatGPT 官方会员<span class="hero-title-accent">自助充值服务</span></h1>
+              <h1>AI 会员订阅<span class="hero-title-accent">自助充值服务</span></h1>
             </div>
             <div class="hero-trust">
               <div><strong>约 3–5 分钟</strong><span>预计完成</span></div>
@@ -49,7 +49,6 @@
               <div><strong>5000+</strong><span>已服务客户</span></div>
             </div>
             <span class="hero-handwritten-loading" lang="en">Good things loading...</span>
-            <span class="hero-signature" lang="en" data-text="Tim">Tim</span>
           </div>
         </div>
 
@@ -171,9 +170,21 @@
                   </div>
                   <p class="field-note session-note">内容应以 { 开头并以 } 结尾。</p>
                 </div>
+                <button class="secondary-btn hidden" id="premium-input-toggle" type="button">改为手动填写 Account ID</button>
                 <div class="premium-account-fields hidden" id="premium-account-fields">
-                  <label for="premium-account-id">ChatGPT Account ID</label>
+                  <div class="premium-account-label-row">
+                    <label for="premium-account-id">ChatGPT Account ID</label>
+                    <button class="organization-help-toggle hidden" id="organization-help-toggle" type="button" aria-expanded="false" aria-controls="organization-help">如何获取组织 ID</button>
+                  </div>
                   <input id="premium-account-id" maxlength="36" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" aria-describedby="premium-account-note" />
+                  <div class="organization-help hidden" id="organization-help" role="region" aria-labelledby="organization-help-toggle">
+                    <ol>
+                      <li>登录需要充值的 Claude 账号。</li>
+                      <li>打开 <a href="https://claude.ai/settings/account" target="_blank" rel="noopener noreferrer">Claude 账号设置<span class="sr-only">（在新标签页打开）</span></a>，进入 Account（账号）页面。</li>
+                      <li>找到并复制 Organization ID，返回本站粘贴，再次输入并核对。</li>
+                    </ol>
+                    <p class="organization-help-warning">请核对目标账号：Organization ID 填错可能充值到其他 Claude 账号或组织。</p>
+                  </div>
                   <label for="premium-account-confirm">再次输入 Account ID</label>
                   <input id="premium-account-confirm" maxlength="36" autocomplete="off" spellcheck="false" placeholder="请再次输入并确认" />
                   <p class="field-note" id="premium-account-note">高阶通道按 Account ID 充值，不需要粘贴 Session。请核对两次输入，本站无法预先查询订阅状态。</p>
@@ -373,6 +384,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260919-2" defer></script>
+    <script src="./app.js?v=20260919-6" defer></script>
   </body>
 </html>
