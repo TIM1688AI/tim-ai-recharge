@@ -1,5 +1,6 @@
 // Advanced provider boundary. Never log request bodies or redemption codes.
 const crypto = require('node:crypto');
+const catalog = require('./card-catalog');
 
 function createSubmissionGuard(now = Date.now) {
   const entries = new Map();
@@ -21,9 +22,9 @@ function validCode(value) {
 }
 function supplierCode(value) {
   if (!validCode(value)) throw new Error('卡密格式不正确');
-  return normalizeCode(value).replace(/^TIM(5X|20X)?-/, 'JZ$1-');
+  return catalog.card('advanced', normalizeCode(value)).supplier;
 }
-function publicCode(value) { return String(value || '').replace(/^JZ(5X|20X)?-([A-Z0-9]{11})$/i, 'TIM$1-$2').toUpperCase(); }
+function publicCode(value) { try { return catalog.card('advanced', normalizeCode(value), { raw: true }).public; } catch { return String(value || '').toUpperCase(); } }
 function taskResult(data, key) {
   const raw = data.result_status === 'pending' ? 'pending' : data.status;
   const labels = { active: '卡密未使用', used: '卡密已使用，结果待确认', pending: '正在处理', disabled: '卡密已停用', invalid: '卡密无效', receipt_invalid: '充值凭证无效', receipt_used: '凭证已使用，请联系售后核查', failed: '充值失败，请联系售后', unknown: '结果待确认', error: '查询暂不可用，请重试' };

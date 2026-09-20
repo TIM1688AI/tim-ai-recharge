@@ -384,7 +384,7 @@ function isPlausibleChannelKey(value, channelId = state.activeChannel) {
   return isAdvancedChannel(channelId)
     ? /^(?:TIM(?:5X|20X)?-[A-Z0-9]{11}|[A-Z0-9]{16})$/.test(key)
     : channelId === 'premium'
-      ? /^(?:TIMC-(?:PRO|MAX5|MAX20)|TIMG-(?:PLUS|PRO5|PRO20))-[A-Z0-9]+$/.test(key)
+      ? /^(?:TIMC-(?:PRO|MAX5|MAX5SPECIAL|MAX20)|TIMG-(?:PLUS|PRO5|PRO5SPECIAL|PRO20))-[A-Z0-9]+$/.test(key)
         && key.length + (key.startsWith('TIMC-') ? 1 : -5) >= 8
         && key.length + (key.startsWith('TIMC-') ? 1 : -5) <= 64
     : isPlausibleKey(key);
@@ -736,7 +736,7 @@ function updateChannelInterface() {
   $('#guide-target-title').textContent = premium ? '确认 Account ID' : '复制 Session JSON';
   if (premium) $('#guide-target-copy').textContent = '在 ChatGPT 账号信息中确认 Account ID，输入两次后再提交。';
   else $('#guide-target-copy').innerHTML = '<a href="https://chatgpt.com/auth/login" target="_blank" rel="noopener noreferrer">登录 ChatGPT</a>，打开 <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer">Session 页面</a>并复制全部内容。';
-  $('.hero-trust > div:nth-child(3) span').textContent = premium ? '不留存账号信息' : '不留存 Session';
+  $('.hero-trust > div:nth-child(3) span').textContent = premium ? '不留存访问令牌' : '不留存 Session';
   $('.recharge-shell > .privacy-note b').textContent = premium ? '浏览器端不保存 Account ID' : '浏览器端不保存 Session JSON';
   updateBatchControls();
   updatePremiumTargetInterface();
@@ -1223,13 +1223,13 @@ function getTaskStatus(task) {
 }
 
 function getRecordOrganizationId(task, cardKey = task?.cdk_code) {
-  if (task?.premium !== true || !/^TIMC-(?:PRO|MAX5|MAX20)-/.test(normalizeKey(cardKey)) || task.task_status === 'not_found') return null;
+  if (task?.premium !== true || !/^TIMC-(?:PRO|MAX5|MAX5SPECIAL|MAX20)-/.test(normalizeKey(cardKey)) || task.task_status === 'not_found') return null;
   const value = typeof task.organization_id === 'string' ? task.organization_id.trim().toLowerCase() : '';
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : '';
 }
 
 function getPremiumGptAccountHints(task, cardKey = task?.cdk_code) {
-  if (task?.premium !== true || !/^TIMG-(?:PLUS|PRO5|PRO20)-/.test(normalizeKey(cardKey)) || task.task_status === 'not_found') return null;
+  if (task?.premium !== true || !/^TIMG-(?:PLUS|PRO5|PRO5SPECIAL|PRO20)-/.test(normalizeKey(cardKey)) || task.task_status === 'not_found') return null;
   return {
     email: typeof task.account_email_hint === 'string' ? task.account_email_hint : '',
     id: typeof task.account_id_hint === 'string' ? task.account_id_hint : '',

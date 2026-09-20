@@ -2,7 +2,7 @@ services:
   - type: web
     name: tim-ai-recharge
     runtime: node
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
     maxShutdownDelaySeconds: 30
@@ -15,4 +15,3 @@ services:
         sync: false
       - key: STATION_API_KEY
         sync: false
-

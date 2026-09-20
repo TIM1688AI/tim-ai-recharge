@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const catalog = require('./card-catalog');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUSES = new Set(['invalid', 'unused', 'pending', 'processing', 'used', 'disabled', 'success', 'failed', 'review', 'unknown']);
@@ -12,10 +13,7 @@ function normalizeCard(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, '').toUpperCase() : '';
 }
 
-const CARD_PREFIXES = Object.freeze([
-  ['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'], ['TIMC-MAX20-', 'CLAUDEMAX20-'],
-  ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-'], ['TIMG-PRO20-', 'PRO20-'],
-]);
+const CARD_PREFIXES = Object.freeze(catalog.PREFIXES.filter(p => p[0] === 'premium').map(p => [p[3], p[2]]));
 
 function toSupplierCard(value) {
   const card = normalizeCard(value);
@@ -33,6 +31,12 @@ function toPublicCard(card) {
     if (card.startsWith(supplierPrefix)) return publicPrefix + card.slice(supplierPrefix.length);
   }
   return '';
+}
+
+function displayPlan(card, value) {
+  const plan = String(value || '').replaceAll(card, toPublicCard(card));
+  return /(?:CLAUDEMAX5SPECIAL|PRO5SPECIAL)-/.test(card) && !/special/i.test(plan)
+    ? `${plan ? `${plan} · ` : ''}Special 卡` : plan;
 }
 
 function isCard(value) { return Boolean(toSupplierCard(value)); }
@@ -155,7 +159,7 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
         invalid: '卡密无效', used: '卡密已使用，结果待确认', disabled: '卡密不可用',
       }[status],
       stop_polling: data?.stop_polling === true,
-      plan_type: typeof data?.product_code === 'string' ? data.product_code.replaceAll(card, toPublicCard(card)) : '',
+      plan_type: displayPlan(card, data?.product_name || data?.product_code),
       created_at: data?.submitted_at || null, completed_at: data?.completed_at || null,
       failure_reason: status === 'failed' ? '供应商处理失败，请携卡密联系供应商核对。' : '',
     };
@@ -202,7 +206,7 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
       if (data.status !== 'unused') return { valid: false, pending: ['processing', 'used', 'unknown'].includes(data.status), error: '卡密当前不可提交，请查询结果' };
       const redeemType = normalizeRedeemType(data.redeem_type);
       if (!redeemType) return { valid: false, error: '此卡密需要其他兑换目标，当前网站暂不支持' };
-      return { valid: true, plan_type: String(data.product_name || data.product_code || '').replaceAll(card, toPublicCard(card)), redeem_type: redeemType };
+      return { valid: true, plan_type: displayPlan(card, data.product_name || data.product_code), redeem_type: redeemType };
     }
     if (route.routeName === 'create-task') {
       const card = toSupplierCard(payload.cdk_code);

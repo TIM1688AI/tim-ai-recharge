@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Tim · 充值工作台</title><link rel="stylesheet" href="/admin.css"></head>
+<body>
+<!-- THESIS: A personal operating desk, with inventory and order truth visible before action.
+OWN-WORLD: Incumbent warm paper, dark ink, terracotta actions; system UI type and ruled tables.
+STORY: Select a pool, check the target, submit once, reconcile the result.
+FIRST VIEWPORT: Compact navigation, left input form, right persistent order receipt.
+FORM: User-approved four-page workbench, no new visual identity or concept seed required.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md -->
+<a class="skip" href="#main">跳到主要内容</a>
+<header><a class="brand" href="/admin">Tim <span>充值工作台</span></a><div id="account-actions" hidden><button id="reauth-open" class="quiet">验证身份</button><button id="logout" class="quiet">退出登录</button></div></header>
+<div id="notice" role="status" aria-live="polite"></div>
+<main id="main">
+<section id="login-panel" class="login">
+  <h1>登录工作台</h1><p class="muted">仅供管理员使用。卡密库存与客户信息受登录保护。</p>
+  <form id="login-form"><label>管理员密码<input type="password" name="password" autocomplete="current-password" required maxlength="256"></label><label>动态验证码<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="验证器中的 6 位数字"></label><button type="submit">登录</button></form>
+</section>
+<div id="workspace" hidden>
+<nav aria-label="工作台导航"><button data-page="recharge" aria-current="page">充值</button><button data-page="inventory">卡密库存</button><button data-page="records">充值记录</button><button data-page="stats">数据统计</button></nav>
+<section id="page-recharge" class="page">
+ <div class="page-head"><div><h1>为一个账号充值</h1><p>选择通道和产品，核对账号后由后台自动取卡。</p></div></div>
+ <div class="split"><form id="recharge-form" class="sheet">
+  <div class="fields"><label>充值通道<select name="channel" class="channel"></select></label><label>充值产品<select name="product" class="product"></select></label></div>
+  <p id="pool-count" class="hint">可用库存以提交时的分配结果为准。</p>
+  <div id="session-input"><label>Session JSON<textarea name="session_json" rows="6" spellcheck="false" autocomplete="off" placeholder="仅用于本次检查和充值，不保存 Session"></textarea></label></div>
+  <div id="premium-input" hidden>
+   <div id="gpt-session"><label>从 Session 自动识别（可选）<textarea id="extract-session" rows="3" spellcheck="false" autocomplete="off" placeholder="仅在浏览器提取 Account ID，不发送完整 Session"></textarea></label><button type="button" id="extract" class="quiet">识别账号 ID</button></div>
+   <label><span id="target-label">Account ID</span><input name="account_id" autocomplete="off" maxlength="36" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></label>
+   <label>再次确认账号 / 组织 ID<input name="account_confirm" autocomplete="off" maxlength="36"></label>
+   <label>邮箱备注（可选，不作为充值目标）<input type="email" name="email" autocomplete="off" maxlength="254"></label>
+   <p id="claude-hint" class="hint" hidden>登录 Claude 后，在 Account 设置中核对 Organization ID。若出现身份验证要求，请先完成验证。填错 ID 可能充值到其他组织。</p>
+  </div>
+  <button type="button" id="check-account">检查并核对账号</button>
+  <div id="confirmation" hidden><h2>提交前确认</h2><p id="confirmed-target" class="mono"></p><label class="check"><input type="checkbox" name="confirmed">我已核对通道、产品及充值目标</label><label class="check" id="overwrite-label" hidden><input type="checkbox" name="overwrite_confirmed">我接受此次充值可能覆盖已有订阅</label><button type="submit">确认充值 · 自动取卡</button></div>
+ </form><aside class="receipt" aria-live="polite"><h2>本次订单</h2><div id="current-order"><p class="muted">完成账号核对后提交。订单会保存在充值记录中。</p></div><button id="query-current" class="quiet" hidden>查询原订单</button><button id="new-order" class="quiet" hidden>开始下一笔</button><p class="hint">结果待确认时不要重新充值。后台会查询原订单，不自动换卡。</p></aside></div>
+</section>
+<section id="page-inventory" class="page" hidden>
+ <div class="page-head"><div><h1>卡密库存</h1><p>入库自动转换 TIM 格式。对外发卡先出库，避免重复使用。</p></div><button id="refresh-inventory" class="quiet">刷新库存</button></div>
+ <div class="split"><form id="import-form" class="sheet"><h2>批量入库</h2><div class="fields"><label>通道<select name="channel" class="channel"></select></label><label>产品<select name="product" class="product"></select></label></div><label>单列 TXT / CSV 文件<input type="file" id="import-file" accept=".txt,.csv"></label><label>卡密，每行一张<textarea name="text" rows="6" spellcheck="false" autocomplete="off" required placeholder="接受该通道原始卡密或 TIM 格式"></textarea></label><label class="check"><input type="checkbox" name="already_issued">这些卡已发给客户，仅登记为已出库</label><div class="actions"><button type="button" id="preview-import" class="quiet">预览转换与检查</button><button id="commit-import" type="submit" disabled>确认入库</button></div><div id="import-preview" class="scroll-region" aria-live="polite"></div></form>
+ <form id="issue-form" class="sheet"><h2>对外发卡</h2><p class="muted">只使用已验证库存，输出 TIM 格式；年度卡和常规卡保持原样。</p><div class="fields"><label>通道<select name="channel" class="channel"></select></label><label>产品<select name="product" class="product"></select></label></div><label>数量<input name="quantity" type="number" min="1" max="100" value="1" required></label><button type="submit">确认出库</button><div id="issue-result" aria-live="polite"></div><p class="hint">下载中断时，从下方出库批次重新下载，不要再次出库。</p></form></div>
+ <div class="section-head"><h2>库存明细</h2><button id="verify-pending" class="quiet">验证本页待入库卡密</button></div><p class="muted">每页 100 张。验证失败的卡保留待处理，不会进入可用库存。窄屏可横向滑动表格查看时间及操作。</p><div id="inventory-table" class="table-wrap"></div><div class="actions"><button id="inventory-prev" class="quiet">上一页</button><span id="inventory-count"></span><button id="inventory-next" class="quiet">下一页</button></div>
+ <h2>最近出库批次</h2><div id="batches-table" class="table-wrap"></div>
+</section>
+<section id="page-records" class="page" hidden>
+ <div class="page-head"><div><h1>充值记录</h1><p>默认脱敏显示。查看完整账号或导出前，请验证身份。</p></div></div>
+ <form id="records-form" class="filters"><label>开始日期<input type="date" name="from" required></label><label>结束日期<input type="date" name="to" required></label><label>通道<select name="channel"><option value="">全部通道</option><option value="regular">常规充值</option><option value="advanced">进阶充值</option><option value="premium">高阶充值</option></select></label><label>状态<select name="state"><option value="">全部状态</option><option value="success">成功</option><option value="failed">失败</option><option value="processing">处理中</option><option value="pending">待处理</option><option value="unknown">待确认</option></select></label><label>账号 / 邮箱 / 订单号<input name="search" maxlength="254" autocomplete="off"></label><button type="submit">查询记录</button><button type="button" id="export-records" class="quiet">导出 CSV</button></form>
+ <label>产品筛选<select id="records-product"><option value="">全部产品</option></select></label><p id="records-count" class="muted"></p><p class="hint">窄屏可横向滑动表格查看全部字段和操作。</p><div id="records-table" class="table-wrap"></div><div class="actions"><button id="records-prev" class="quiet">上一页</button><button id="records-next" class="quiet">下一页</button></div>
+</section>
+<section id="page-stats" class="page" hidden>
+ <div class="page-head"><div><h1>数据统计</h1><p>最近 30 天 · 北京时间。提交按提交日，成功按完成日，出库不计作充值成功。</p></div><button id="refresh-stats" class="quiet">刷新统计</button></div>
+ <p class="hint">窄屏可横向滑动表格查看全部产品、通道与数量。</p><h2>每日提交与结果</h2><div id="daily-table" class="table-wrap"></div><h2>每日成功充值</h2><p class="muted">成功账号数按各通道和产品去重，不能跨行相加作为全站去重人数。</p><div id="success-table" class="table-wrap"></div><h2>对外发卡</h2><div id="issued-table" class="table-wrap"></div><h2>当前库存分布</h2><div id="stock-table" class="table-wrap"></div>
+</section>
+</div>
+</main>
+<dialog id="reauth-dialog" aria-labelledby="reauth-title"><form id="reauth-form"><h2 id="reauth-title">重新验证身份</h2><p>验证后 5 分钟内可查看和导出敏感信息。若刚登录，请使用下一组动态验证码。</p><p id="reauth-error" role="alert" aria-live="assertive"></p><label>管理员密码<input type="password" name="password" autocomplete="current-password" required></label><label>动态验证码<input name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><div class="actions"><button type="button" id="reauth-close" class="quiet">取消</button><button type="submit">验证身份</button></div></form></dialog>
+<script src="/admin.js" defer></script>
+</body></html>

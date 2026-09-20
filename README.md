@@ -12,7 +12,7 @@ GPT 高阶充值默认在浏览器粘贴 Session JSON，只读取 `account.id`�
 
 高阶通道按卡密验证返回的 `redeem_type` 自动识别 ChatGPT 与 Claude：`chatgpt_account_id` 填写 36 位 ChatGPT Account ID，`claude_org_id` 填写 36 位 Claude Organization ID，均须输入两次并确认。兼容文档中的 `account_id`、`claude_org`、`organization_id` 别名，提交时统一使用规范值；服务端会再次验证卡密并核对兑换类型，防止目标类型错配。Session JSON 等其他类型暂不支持。高阶通道没有订阅预检 API，不能预先保证覆盖资格。提交请求使用从服务端 Key 与还原后的供应商卡密派生的稳定幂等号；未知、处理中和复核状态只查询，不自动创建新订单。更换 `AGENT_API_KEY` 后幂等号会变化，因此轮换密钥前应先核对未完成订单，并以卡密状态继续追踪。
 
-高阶卡密只接受新的品牌格式，前后端同时拒绝供应商原始格式（包括查询）。服务端精确映射 `TIMC-PRO-` → `CLAUDEPRO-`、`TIMC-MAX5-` → `CLAUDEMAX5-`、`TIMC-MAX20-` → `CLAUDEMAX20-`、`TIMG-PLUS-` → `PLUS-`、`TIMG-PRO5-` → `PRO5-`、`TIMG-PRO20-` → `PRO20-`，字母数字后缀保持不变；输入去空白并转大写。供应商侧长度仍须为 8–64 位，不擅自固定后缀长度。验证、提交、单卡和批量查询使用同一映射，返回页面的卡密恢复为品牌格式。旧订单未删除，用对应的新格式仍可查到原订单，原格式入口已关闭。常规、进阶通道不受影响。
+高阶卡密只接受新的品牌格式，前后端同时拒绝供应商原始格式（包括查询）。服务端精确映射 `TIMC-PRO-` → `CLAUDEPRO-`、`TIMC-MAX5-` → `CLAUDEMAX5-`、`TIMC-MAX5SPECIAL-` → `CLAUDEMAX5SPECIAL-`、`TIMC-MAX20-` → `CLAUDEMAX20-`、`TIMG-PLUS-` → `PLUS-`、`TIMG-PRO5-` → `PRO5-`、`TIMG-PRO5SPECIAL-` → `PRO5SPECIAL-`、`TIMG-PRO20-` → `PRO20-`，字母数字后缀保持不变；输入去空白并转大写。供应商侧长度仍须为 8–64 位，不擅自固定后缀长度。验证、提交、单卡和批量查询使用同一映射，返回页面的卡密恢复为品牌格式。`SPECIAL` 卡仍以供应商 `/cards/probe` 返回的商品与兑换类型为准，不把它自动当作普通 5X 卡。旧订单未删除，用对应的新格式仍可查到原订单，原格式入口已关闭。常规、进阶通道不受影响。
 
 高阶充值记录另通过文档中的 `POST /api/agent/v1/cards/query` 查询同一卡密的身份字段；只有订单查询存在任务编号，且订单状态与卡密查询状态匹配时才展示。Claude 的 `account_id` 按站长确认的含义作为 Organization ID，向持有对应 TIMC 卡密的查询者返回经 UUID 校验的组织 ID。GPT 的 `email` 与 `account_id` 仅以脱敏提示返回，不转发原值；无可靠结果时显示“暂未获取”。查询不持久化身份字段，不记录供应商原始身份响应。请妥善保管完整卡密，持卡者可以查询相关记录。
 
@@ -187,3 +187,6 @@ Session JSON 只保存在当前页面内存中，任务提交后立即清空，�
 Node 静态服务采用文件白名单，只公开 `index.html`、`app.js` 和 `styles.css`。`server.js`、`.git`、测试文件、README、环境文件和部署配置不会通过网站访问。
 
 供应商后端是否保存 Session、如何加密以及保留多久，不由本项目决定。生产上线前应与供应商确认数据留存、日志脱敏和删除策略，再决定页面上的隐私承诺文案。
+# 个人充值工作台
+
+新增默认关闭的 `/admin` 管理入口，支持库存入库、TIM 转换、自动取卡、对外发卡和充值记录统计。配置及安全上线步骤见 [WORKBENCH.md](WORKBENCH.md)。现有客户端充值布局保持不变；启用库存保护后，数据库异常会阻止核销而非绕过保护。

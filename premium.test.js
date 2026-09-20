@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPremiumApi, validate, toSupplierCard, toPublicCard } = require('./premium');
 const { createHmac } = require('crypto');
-const { isPlausibleChannelKey, extractPremiumSessionTarget } = require('./app');
+const { isPlausibleChannelKey, extractPremiumSessionTarget, getRecordOrganizationId, getPremiumGptAccountHints } = require('./app');
 
 const CARD = 'TIMG-PLUS-EXAMPLE123456';
 const ACCOUNT = '123e4567-e89b-42d3-a456-426614174000';
@@ -18,10 +18,10 @@ const route = (routeName) => ({ routeName });
 const envelope = (data, code = 0) => ({ ok: code === 0, status: code === 0 ? 200 : 404,
   text: async () => JSON.stringify({ code, message: code === 0 ? 'ok' : 'missing', data }) });
 
-test('六类品牌卡覆盖验证、提交、单查和批查，拒绝全部旧格式', async () => {
+test('八类品牌卡覆盖验证、提交、单查和批查，拒绝全部旧格式', async () => {
   for (const [prefix, original] of [
-    ['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'], ['TIMC-MAX20-', 'CLAUDEMAX20-'],
-    ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-'], ['TIMG-PRO20-', 'PRO20-'],
+    ['TIMC-PRO-', 'CLAUDEPRO-'], ['TIMC-MAX5-', 'CLAUDEMAX5-'], ['TIMC-MAX5SPECIAL-', 'CLAUDEMAX5SPECIAL-'], ['TIMC-MAX20-', 'CLAUDEMAX20-'],
+    ['TIMG-PLUS-', 'PLUS-'], ['TIMG-PRO5-', 'PRO5-'], ['TIMG-PRO5SPECIAL-', 'PRO5SPECIAL-'], ['TIMG-PRO20-', 'PRO20-'],
   ]) {
     const card = prefix + 'TEST123456789ABC';
     const raw = original + 'TEST123456789ABC';
@@ -34,14 +34,17 @@ test('六类品牌卡覆盖验证、提交、单查和批查，拒绝全部旧�
     const api = createPremiumApi({ getKey: () => 'fake', fetchImpl: async (url, options) => {
       calls.push({ path: new URL(url).pathname, body: options.body && JSON.parse(options.body) });
       if (String(url).includes('/redeem/')) return envelope(null, 40400);
-      if (String(url).endsWith('/cards/probe')) return envelope({ valid: true, status: 'unused', redeem_type: type });
+      if (String(url).endsWith('/cards/probe')) return envelope({ valid: true, status: 'unused', redeem_type: type, product_name: type === 'claude_org_id' ? 'Claude Max 5X' : 'ChatGPT Pro 5X' });
       if (String(url).endsWith('/cards/redeem')) return envelope({ status: 2, order_no: 'ORDER-TEST' });
-      return envelope({ status: 'success', order_no: 'ORDER-TEST' });
+      return envelope({ status: 'success', order_no: 'ORDER-TEST', product_code: 'pro5' });
     } });
-    await api.handle(route('verify-cdk'), { cdk_code: card });
+    const verified = await api.handle(route('verify-cdk'), { cdk_code: card });
+    assert.equal(verified.plan_type.includes('Special 卡'), prefix.includes('SPECIAL'));
     const submitted = await api.handle(route('create-task'), { cdk_code: card, account_id: ACCOUNT, account_confirm: ACCOUNT, redeem_type: type });
     assert.equal(submitted.cdk_code, card);
-    assert.equal((await api.handle(route('redeem-status'), { cdk_code: card })).cdk_code, card);
+    const status = await api.handle(route('redeem-status'), { cdk_code: card });
+    assert.equal(status.cdk_code, card);
+    assert.equal(status.plan_type.includes('Special 卡'), prefix.includes('SPECIAL'));
     assert.equal((await api.handle(route('lookup/tasks'), { codes: [card, card.toLowerCase()] })).tasks.length, 1);
     for (const call of calls.filter(call => call.body)) assert.equal(call.body.code || call.body.card_code, raw);
     const count = calls.length;
@@ -50,6 +53,8 @@ test('六类品牌卡覆盖验证、提交、单查和批查，拒绝全部旧�
     }
     assert.equal(calls.length, count);
   }
+  assert.equal(getRecordOrganizationId({ premium: true, task_status: 'completed', organization_id: ACCOUNT }, 'TIMC-MAX5SPECIAL-MOCK123'), ACCOUNT);
+  assert.deepEqual(getPremiumGptAccountHints({ premium: true, task_status: 'completed', account_email_hint: 'a***@example.com', account_id_hint: '123e4567…4000' }, 'TIMG-PRO5SPECIAL-MOCK123'), { email: 'a***@example.com', id: '123e4567…4000' });
   for (const card of ['TIMC-OTHER-ABCDEF', 'TIMG-OTHER-ABCDEF', 'TIMC-PRO-', 'TIM-PRO-ABCDEF', 'TIMG-PLUS-X!', 'TIMC-PRO-' + 'X'.repeat(55)]) {
     assert.equal(toSupplierCard(card), '');
     assert.equal(isPlausibleChannelKey(card, 'premium'), false);
@@ -173,7 +178,7 @@ test('ChatGPT 和 Claude 及文档别名按供应商类型兑换，拒绝目标�
 });
 
 test('Claude 单查并行补取组织 ID，只输出有效组织字段', { timeout: 1000 }, async () => {
-  for (const prefix of ['TIMC-PRO-', 'TIMC-MAX5-', 'TIMC-MAX20-']) {
+  for (const prefix of ['TIMC-PRO-', 'TIMC-MAX5-', 'TIMC-MAX5SPECIAL-', 'TIMC-MAX20-']) {
     const card = prefix + 'MOCKIDENTITY123';
     const calls = [];
     let identityStarted;
