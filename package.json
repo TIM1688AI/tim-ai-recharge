@@ -5,12 +5,8 @@
   "description": "Tim AI membership recharge site",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test server.test.js advanced.test.js premium.test.js partner-api.test.js workbench.test.js",
-    "admin:migrate": "node admin-tools.js migrate",
-    "admin:setup": "node admin-tools.js setup"
+    "test": "node --test server.test.js advanced.test.js premium.test.js partner-api.test.js"
   },
-  "dependencies": { "pg": "^8.16.3" },
-  "devDependencies": { "@electric-sql/pglite": "^0.3.14" },
   "engines": {
     "node": ">=18"
   }

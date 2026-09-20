@@ -5,7 +5,6 @@ const path = require('path');
 const advanced = require('./advanced');
 const { createPremiumApi, validate: validatePremiumPayload } = require('./premium');
 const { createPartnerApi } = require('./partner-api');
-const { createWorkbench } = require('./workbench');
 
 const configuredPort = Number(process.env.PORT);
 const host = process.env.HOST || '0.0.0.0';
@@ -491,7 +490,7 @@ function forwardUpstream(request, response, route, body) {
   upstream.end(body);
 }
 
-function proxyApi(request, response, route, publicPath, workbench) {
+function proxyApi(request, response, route, publicPath) {
   if (request.method !== route.method) {
     response.writeHead(405, { ...securityHeaders, Allow: route.method }).end('Method not allowed');
     return;
@@ -541,12 +540,6 @@ function proxyApi(request, response, route, publicPath, workbench) {
       return;
     }
     if (!enforceRateLimit(request, response, publicPath)) return;
-    if (workbench?.guard && ['create-task', 'refresh-cdk', 'cancel-task'].includes(route.routeName)) {
-      workbench.publicInvoke(route.channel, route.routeName, payload).then(result => sendJson(response, 200, result)).catch(error => {
-        sendJson(response, error.safe ? error.status : 503, { error: error.safe ? error.message : '提交结果待确认，请查询原卡密，勿重复充值', submission_uncertain: !error.safe });
-      });
-      return;
-    }
     forwardUpstream(request, response, route, Buffer.from(JSON.stringify(['advanced', 'premium'].includes(route.channel) ? payload : buildUpstreamPayload(route, payload))));
   });
 }
@@ -577,9 +570,8 @@ async function invokePartnerProvider(channel, name, payload) {
   } finally { clearTimeout(timer); }
 }
 
-function createServer(options = {}) {
-  const workbench = createWorkbench({ invoke: options.invoke || invokePartnerProvider, send: sendJson, env: options.env || process.env, pool: options.pool });
-  const partnerHandler = createPartnerApi({ invoke: workbench.publicInvoke, send: sendJson });
+function createServer() {
+  const partnerHandler = createPartnerApi({ invoke: invokePartnerProvider, send: sendJson });
   const server = http.createServer((request, response) => {
     let pathname;
     try {
@@ -589,16 +581,12 @@ function createServer(options = {}) {
       return;
     }
 
-    if (pathname.startsWith('/admin-api/')) {
-      void workbench.handle(request, response, pathname);
-      return;
-    }
     if (pathname.startsWith('/partner-api/')) {
       void partnerHandler(request, response, pathname);
       return;
     }
     if (apiRoutes.has(pathname)) {
-      proxyApi(request, response, apiRoutes.get(pathname), pathname, workbench);
+      proxyApi(request, response, apiRoutes.get(pathname), pathname);
       return;
     }
 
@@ -617,8 +605,7 @@ function createServer(options = {}) {
       return;
     }
 
-    const adminFiles = { '/admin': 'admin.html', '/admin/': 'admin.html', '/admin.js': 'admin.js', '/admin.css': 'admin.css' };
-    const staticFile = workbench.enabled && Object.hasOwn(adminFiles, pathname) ? adminFiles[pathname] : staticFiles.get(pathname);
+    const staticFile = staticFiles.get(pathname);
     if (!staticFile) {
       response.writeHead(404, securityHeaders).end('Not found');
       return;
@@ -632,7 +619,7 @@ function createServer(options = {}) {
       }
       response.writeHead(200, {
         ...securityHeaders,
-        'Cache-Control': staticFile.startsWith('admin.') ? 'no-store' : staticFile === 'index.html' ? 'no-cache' : 'public, max-age=300, must-revalidate',
+        'Cache-Control': staticFile === 'index.html' ? 'no-cache' : 'public, max-age=300, must-revalidate',
         'Content-Type': mime[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
       });
       if (request.method === 'HEAD') response.end();
@@ -644,7 +631,6 @@ function createServer(options = {}) {
   server.keepAliveTimeout = 5000;
   server.maxHeadersCount = 100;
   server.maxRequestsPerSocket = 100;
-  server.on('close', () => { void workbench.close(); });
   return server;
 }
 
