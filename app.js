@@ -1228,6 +1228,14 @@ function getRecordOrganizationId(task, cardKey = task?.cdk_code) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value) ? value : '';
 }
 
+function getPremiumGptAccountHints(task, cardKey = task?.cdk_code) {
+  if (task?.premium !== true || !/^TIMG-(?:PLUS|PRO5|PRO20)-/.test(normalizeKey(cardKey)) || task.task_status === 'not_found') return null;
+  return {
+    email: typeof task.account_email_hint === 'string' ? task.account_email_hint : '',
+    id: typeof task.account_id_hint === 'string' ? task.account_id_hint : '',
+  };
+}
+
 function formatDateTime(value) {
   if (!value) return '—';
   const text = String(value).trim();
@@ -1552,9 +1560,12 @@ function renderTask(task) {
   if (task.advanced) $('#task-result-copy').append(' 离开页面后，可在“充值记录”中输入原卡密查询结果。');
   $('#task-status').textContent = status.label;
   const organizationId = getRecordOrganizationId(task, task.cdk_code || state.activeTask?.cardKey);
-  $('#task-account-label').textContent = organizationId === null ? '充值账号' : '组织 ID';
+  const gptAccount = getPremiumGptAccountHints(task, task.cdk_code || state.activeTask?.cardKey);
+  $('#task-account-label').textContent = organizationId !== null ? '组织 ID' : gptAccount ? '账号邮箱' : '充值账号';
   $('#task-account').textContent = organizationId !== null ? organizationId || '暂未获取'
-    : task.premium ? '以提交时确认的充值 ID 为准' : task.account_email ? maskEmail(task.account_email) : '等待识别';
+    : gptAccount ? gptAccount.email || '暂未获取' : task.premium ? '以提交时确认的充值 ID 为准' : task.account_email ? maskEmail(task.account_email) : '等待识别';
+  $('#task-account-id-row').classList.toggle('hidden', !gptAccount?.id);
+  $('#task-account-id').textContent = gptAccount?.id || '—';
   $('#task-plan').textContent = formatRechargeType(task.plan_type || state.activeTask?.planType);
   $('#task-time').textContent = formatDateTime(task.completed_at || task.updated_at || task.created_at);
   const failure = $('#task-failure');
@@ -1890,58 +1901,50 @@ function closeBatchResultsModal({ restoreFocus = true } = {}) {
 function createResultMeta(item, status) {
   const meta = document.createElement('div');
   meta.className = 'batch-result-meta';
+  const overview = document.createElement('div');
+  overview.className = 'batch-result-meta-row batch-result-meta-overview';
+  const details = document.createElement('div');
+  details.className = 'batch-result-meta-row batch-result-meta-details';
+  const extra = document.createElement('div');
+  extra.className = 'batch-result-meta-row batch-result-meta-extra';
+  const field = (label, value, className = '') => {
+    const element = document.createElement('span');
+    if (className) element.className = className;
+    element.append(`${label}：`);
+    const text = document.createElement('b');
+    text.textContent = value;
+    element.append(text);
+    return element;
+  };
   const organizationId = getRecordOrganizationId(item);
+  const gptAccount = getPremiumGptAccountHints(item);
+  if (item.plan_type) overview.append(field('充值类型', formatRechargeType(item.plan_type)));
+  if (item.created_at) overview.append(field(item.advanced ? '创建时间' : '提交时间', formatDateTime(item.created_at)));
+  if (status.kind === 'completed' && item.completed_at) overview.append(field('完成时间', formatDateTime(item.completed_at)));
+  const account = document.createElement('div');
+  account.className = 'batch-result-account';
   if (organizationId !== null) {
-    const organization = document.createElement('span');
-    organization.className = 'batch-result-organization';
-    organization.append('组织 ID（Organization ID）：');
-    const value = document.createElement('b');
-    value.textContent = organizationId || '暂未获取';
-    organization.append(value);
-    meta.append(organization);
-  }
-  if (item.plan_type) {
-    const plan = document.createElement('span');
-    plan.append('充值类型：');
-    const value = document.createElement('b');
-    value.textContent = formatRechargeType(item.plan_type);
-    plan.append(value);
-    meta.append(plan);
+    account.append(field('组织 ID（Organization ID）', organizationId || '暂未获取', 'batch-result-organization'));
   }
   if (item.account_email) {
-    const account = document.createElement('span');
-    account.append('充值账号：');
-    const value = document.createElement('b');
-    value.textContent = maskEmail(item.account_email);
-    account.append(value);
-    meta.append(account);
+    account.append(field('充值账号', maskEmail(item.account_email)));
   }
-  if (item.task_id) {
-    const taskId = document.createElement('span');
-    taskId.append('任务编号：');
-    const value = document.createElement('b');
-    value.textContent = item.task_id;
-    taskId.append(value);
-    meta.append(taskId);
+  if (gptAccount) {
+    account.append(field('账号邮箱', gptAccount.email || '暂未获取'));
+    if (gptAccount.id) account.append(field('Account ID', gptAccount.id));
   }
-  const appendTime = (label, time) => {
-    if (!time) return;
-    const timeRow = document.createElement('span');
-    timeRow.append(`${label}：`);
-    const value = document.createElement('b');
-    value.textContent = formatDateTime(time);
-    timeRow.append(value);
-    meta.append(timeRow);
-  };
-  appendTime(item.advanced ? '创建时间' : '提交时间', item.created_at);
-  if (item.updated_at && item.updated_at !== item.created_at) appendTime('更新时间', item.updated_at);
-  if (status.kind === 'completed') appendTime('完成时间', item.completed_at);
+  if (account.childElementCount) details.append(account);
+  if (item.task_id) details.append(field('任务编号', item.task_id));
+  if (item.updated_at && item.updated_at !== item.created_at) extra.append(field('更新时间', formatDateTime(item.updated_at)));
   if (status.kind === 'failed' && item.failure_reason) {
     const reason = document.createElement('span');
     reason.className = 'failure-reason';
     reason.textContent = `失败原因：${item.failure_reason}`;
-    meta.append(reason);
+    extra.append(reason);
   }
+  if (overview.childElementCount) meta.append(overview);
+  if (details.childElementCount) meta.append(details);
+  if (extra.childElementCount) meta.append(extra);
   return meta;
 }
 
@@ -2228,6 +2231,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getTaskPollDelay,
     getTaskStatus,
     getRecordOrganizationId,
+    getPremiumGptAccountHints,
     isPlausibleChannelKey,
     isDefiniteSubmissionRejection,
     isPlausibleKey,

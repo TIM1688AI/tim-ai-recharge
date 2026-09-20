@@ -33,6 +33,7 @@ const {
   getTaskPollDelay,
   getTaskStatus,
   getRecordOrganizationId,
+  getPremiumGptAccountHints,
   isPlausibleChannelKey,
   isPlausibleKey,
   maskKey,
@@ -56,6 +57,14 @@ test('组织 ID 仅用于高阶 Claude 记录，缺失不猜测，GPT 与无记�
   assert.equal(getRecordOrganizationId({ ...task, cdk_code: 'TIMC-MAX20-TESTONLY' }), id.toLowerCase());
   assert.equal(getRecordOrganizationId({ ...task, cdk_code: 'TIMG-PRO20-TESTONLY' }), null);
   assert.equal(getRecordOrganizationId(null), null);
+});
+test('GPT 账号提示仅用于高阶 GPT 卡且不显示在无记录卡上', () => {
+  const task = { premium: true, cdk_code: 'TIMG-PRO20-TESTONLY', task_status: 'completed',
+    account_email_hint: 'cu***r@example.com', account_id_hint: '123e4567…4000' };
+  assert.deepEqual(getPremiumGptAccountHints(task), { email: task.account_email_hint, id: task.account_id_hint });
+  assert.equal(getPremiumGptAccountHints({ ...task, premium: false }), null);
+  assert.equal(getPremiumGptAccountHints({ ...task, cdk_code: 'TIMC-MAX20-TESTONLY' }), null);
+  assert.equal(getPremiumGptAccountHints({ ...task, task_status: 'not_found' }), null);
 });
 const SECOND_CDK = 'SHORT-123456';
 const ADVANCED_CDK = 'TIM-ABCDEFGHIJK';

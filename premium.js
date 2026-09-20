@@ -37,6 +37,20 @@ function toPublicCard(card) {
 
 function isCard(value) { return Boolean(toSupplierCard(value)); }
 
+function accountIdHint(value) {
+  const id = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return UUID.test(id) ? `${id.slice(0, 8)}…${id.slice(-4)}` : '';
+}
+
+function accountEmailHint(value) {
+  const email = typeof value === 'string' ? value.trim() : '';
+  if (email.length > 254 || /[\u0000-\u001f\u007f]/.test(email)) return '';
+  const match = /^([^\s@]+)@([^\s@]+\.[^\s@]+)$/.exec(email);
+  if (!match) return '';
+  const [, local, domain] = match;
+  return `${local.slice(0, local.length <= 2 ? 1 : 2)}***${local.length > 2 ? local.slice(-1) : ''}@${domain}`;
+}
+
 function validate(routeName, payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '请求体必须是 JSON 对象';
   if (routeName === 'verify-cdk' || routeName === 'redeem-status') {
@@ -158,7 +172,6 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
   }
 
   async function statusForCard(card) {
-    if (!toPublicCard(card).startsWith('TIMC-')) return readStatusForCard(card);
     // Keep this optional lookup parallel so it does not extend the status-query budget.
     const [result, identity] = await Promise.all([
       readStatusForCard(card),
@@ -168,11 +181,15 @@ function createPremiumApi({ fetchImpl = fetch, getKey = () => process.env.AGENT_
     // when both responses describe an associated, currently processing or successful order.
     const hasMatchingState = (result.task_status === 'completed' && identity?.status === 'success')
       || (['pending', 'submitted'].includes(result.task_status) && identity?.status === 'processing');
-    const organizationId = typeof identity?.account_id === 'string' ? identity.account_id.trim().toLowerCase() : '';
-    if (result.task_id.trim() && hasMatchingState && UUID.test(organizationId)) {
-      return { ...result, organization_id: organizationId };
+    if (!result.task_id.trim() || !hasMatchingState) return result;
+    if (toPublicCard(card).startsWith('TIMC-')) {
+      const organizationId = typeof identity?.account_id === 'string' ? identity.account_id.trim().toLowerCase() : '';
+      return UUID.test(organizationId) ? { ...result, organization_id: organizationId } : result;
     }
-    return result;
+    const emailHint = accountEmailHint(identity?.email);
+    const idHint = accountIdHint(identity?.account_id);
+    return { ...result, ...(emailHint ? { account_email_hint: emailHint } : {}),
+      ...(idHint ? { account_id_hint: idHint } : {}) };
   }
 
   async function handle(route, payload) {

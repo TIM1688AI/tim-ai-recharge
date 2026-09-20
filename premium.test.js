@@ -103,9 +103,12 @@ test('订单查询优先使用幂等号；不存在时回退卡密状态', async
   assert.equal(result.task_status, 'completed');
   assert.equal(result.account_id, undefined);
   assert.equal(result.email, undefined);
-  assert.equal(paths.length, 2);
+  assert.equal(result.account_email_hint, 'pr***e@example.com');
+  assert.equal(result.account_id_hint, '123e4567…4000');
+  assert.equal(paths.length, 3);
   assert.match(paths[0], /\/redeem\/redeem-/);
-  assert.equal(paths[1], '/api/agent/v1/cards/redeem-status');
+  assert.ok(paths.includes('/api/agent/v1/cards/redeem-status'));
+  assert.ok(paths.includes('/api/agent/v1/cards/query'));
 });
 
 test('缺失 Key 时禁止外发请求，HTTP 200 业务失败不能视为成功', async () => {
@@ -222,12 +225,13 @@ test('Claude 原请求不存在时保留卡密状态回退并补取组织 ID', a
   assert.equal(paths.filter(path => path.endsWith('/cards/redeem-status')).length, 1);
 });
 
-test('Claude 批查逐卡绑定组织 ID，混合 GPT 卡不发身份查询且不返回 ID', async () => {
+test('Claude 与 GPT 批查逐卡绑定对应身份，仅返回 GPT 脱敏账号线索', async () => {
   const claudeCards = ['TIMC-PRO-MOCKBATCHONE123', 'TIMC-MAX5-MOCKBATCHTWO123', 'TIMC-MAX20-MOCKBATCHTHREE123'];
   const gptCards = ['TIMG-PLUS-MOCKBATCHGPT123', 'TIMG-PRO5-MOCKBATCHGPT456', 'TIMG-PRO20-MOCKBATCHGPT789'];
   const secondAccount = '987e6543-e21b-43d3-a456-426614174999';
   const thirdAccount = '456e7890-e21b-43d3-a456-426614174999';
   const identities = new Map(claudeCards.map((card, index) => [toSupplierCard(card), [ACCOUNT, secondAccount, thirdAccount][index]]));
+  for (const card of gptCards) identities.set(toSupplierCard(card), ACCOUNT);
   const queried = [];
   const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async (url, options) => {
     const path = new URL(url).pathname;
@@ -235,7 +239,7 @@ test('Claude 批查逐卡绑定组织 ID，混合 GPT 卡不发身份查询且�
       const { code } = JSON.parse(options.body);
       queried.push(code);
       assert.equal(identities.has(code), true);
-      return envelope({ status: 'success', account_id: identities.get(code), email: 'private@example.com' });
+      return envelope({ status: 'success', account_id: identities.get(code), email: 'customer@example.com' });
     }
     assert.match(path, /\/redeem\/redeem-/);
     return envelope({ status: 'success', order_no: 'MOCK-ORDER', organization_id: ACCOUNT, account_id: ACCOUNT });
@@ -248,12 +252,58 @@ test('Claude 批查逐卡绑定组织 ID，混合 GPT 卡不发身份查询且�
     assert.equal(Object.hasOwn(task, 'account_id'), false);
     assert.equal(Object.hasOwn(task, 'email'), false);
   }
-  for (const task of result.tasks.slice(3)) assert.equal(Object.hasOwn(task, 'organization_id'), false);
+  for (const task of result.tasks.slice(0, 3)) {
+    assert.equal(Object.hasOwn(task, 'account_email_hint'), false);
+    assert.equal(Object.hasOwn(task, 'account_id_hint'), false);
+  }
+  for (const task of result.tasks.slice(3)) {
+    assert.equal(Object.hasOwn(task, 'organization_id'), false);
+    assert.equal(task.account_email_hint, 'cu***r@example.com');
+    assert.equal(task.account_id_hint, '123e4567…4000');
+    assert.doesNotMatch(JSON.stringify(task), /customer@example\.com|123e4567-e89b-42d3-a456-426614174000/);
+  }
   assert.deepEqual(queried.sort(), [...identities.keys()].sort());
   for (const card of gptCards) {
-    assert.equal(Object.hasOwn(await api.handle(route('redeem-status'), { cdk_code: card }), 'organization_id'), false);
+    const task = await api.handle(route('redeem-status'), { cdk_code: card });
+    assert.equal(Object.hasOwn(task, 'organization_id'), false);
+    assert.equal(task.account_email_hint, 'cu***r@example.com');
   }
-  assert.equal(queried.length, 3);
+  assert.equal(queried.length, 9);
+});
+
+test('GPT 身份查询仅在订单状态一致时展示，错误或缺失字段不猜测账号', async () => {
+  for (const [status, identityStatus, orderNo, allowed] of [
+    ['success', 'success', 'MOCK-ORDER', true],
+    ['pending', 'processing', 'MOCK-ORDER', true],
+    ['success', 'processing', 'MOCK-ORDER', false],
+    ['processing', 'success', 'MOCK-ORDER', false],
+    ['success', 'success', undefined, false],
+    ['failed', 'success', 'MOCK-ORDER', false],
+    ['review', 'processing', 'MOCK-ORDER', false],
+    ['unused', 'success', undefined, false],
+  ]) {
+    const api = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async url => envelope(
+      String(url).endsWith('/cards/query')
+        ? { status: identityStatus, account_id: ACCOUNT, email: 'customer@example.com' }
+        : { status, order_no: orderNo },
+    ) });
+    const result = await api.handle(route('redeem-status'), { cdk_code: 'TIMG-PRO20-MOCKSTATE123' });
+    assert.equal(Object.hasOwn(result, 'account_email_hint'), allowed, `${status}/${identityStatus}/${orderNo}`);
+    assert.equal(Object.hasOwn(result, 'account_id_hint'), allowed);
+  }
+  const invalid = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async url => envelope(
+    String(url).endsWith('/cards/query')
+      ? { status: 'success', account_id: 'not-a-uuid', email: 'not-an-email' }
+      : { status: 'success', order_no: 'MOCK-ORDER' },
+  ) });
+  const result = await invalid.handle(route('redeem-status'), { cdk_code: 'TIMG-PLUS-MOCKINVALID123' });
+  assert.equal(Object.hasOwn(result, 'account_email_hint'), false);
+  assert.equal(Object.hasOwn(result, 'account_id_hint'), false);
+  const unavailable = createPremiumApi({ getKey: () => 'mock-only', fetchImpl: async url => {
+    if (String(url).endsWith('/cards/query')) throw new Error('unavailable');
+    return envelope({ status: 'success', order_no: 'MOCK-ORDER' });
+  } });
+  assert.equal((await unavailable.handle(route('redeem-status'), { cdk_code: 'TIMG-PRO5-MOCKERROR123' })).task_status, 'completed');
 });
 
 test('Claude 无效、无关联或状态不一致时不显示组织 ID，补查异常保留订单结果', async () => {
